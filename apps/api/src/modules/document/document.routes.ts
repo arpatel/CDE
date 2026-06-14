@@ -75,6 +75,35 @@ async function nextFreeDocNumber(
   throw ApiError.conflict("Could not allocate a unique Doc Ref");
 }
 
+// All role IDs a user holds in this tenant/project context: org-membership roles
+// plus their project-member role. Used to resolve role-based folder grants.
+async function userRoleIds(tenantId: string, projectId: string, userId: string): Promise<string[]> {
+  const ids = new Set<string>();
+  const orgRoles = await prisma.userOrgMembership.findMany({
+    where: { userId, role: { tenantId } },
+    select: { roleId: true },
+  });
+  for (const r of orgRoles) ids.add(r.roleId);
+  const pm = await prisma.projectMember.findFirst({
+    where: { projectId, userId },
+    select: { roleId: true },
+  });
+  if (pm?.roleId) ids.add(pm.roleId);
+  return [...ids];
+}
+
+const GrantsSchema = z.object({
+  grants: z
+    .array(
+      z.object({
+        principalType: z.enum(["user", "role"]),
+        principalId: z.string().uuid(),
+        accessLevel: z.enum(["view", "edit", "manage"]).default("view"),
+      }),
+    )
+    .max(500),
+});
+
 export async function documentRoutes(app: FastifyInstance): Promise<void> {
   app.addHook("preHandler", authenticate);
 
