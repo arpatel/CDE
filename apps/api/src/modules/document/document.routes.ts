@@ -54,6 +54,27 @@ function revFileKey(tenantId: string, projectId: string, docId: string, revId: s
   return `${tenantId}/${projectId}/${docId}/${revId}/${sanitizeFilename(filename)}`;
 }
 
+// Find the next Doc Ref that is free within the folder (Doc Ref is unique per folder).
+async function nextFreeDocNumber(
+  tenantId: string,
+  projectId: string,
+  folderId: string | null,
+  prefix: string,
+  startSeq: number,
+): Promise<string> {
+  let seq = startSeq;
+  for (let i = 0; i < 100000; i++) {
+    const candidate = `${prefix}-${String(seq).padStart(4, "0")}`;
+    const exists = await prisma.document.findFirst({
+      where: { tenantId, projectId, folderId, docNumber: candidate, isDeleted: false },
+      select: { id: true },
+    });
+    if (!exists) return candidate;
+    seq++;
+  }
+  throw ApiError.conflict("Could not allocate a unique Doc Ref");
+}
+
 export async function documentRoutes(app: FastifyInstance): Promise<void> {
   app.addHook("preHandler", authenticate);
 
