@@ -14,6 +14,7 @@ Conventions shared by all modules: tenant isolation via `tenant_id`, RFC 7807 er
 - [project-blueprint.md](project-blueprint.md) — **Full enterprise spec** (Business Story · BRD · FRS · User Stories · UI · DB · APIs · Permissions · Reports · Audit · Testing)
 
 ## Documents & Workflow (Phase 2)
+- [folder-management-blueprint.md](folder-management-blueprint.md) — **Full enterprise spec** (Folder tree · Metadata defaults · Doc Ref governance · Folder permissions · UI · DB · APIs · Diagrams · Audit · Testing)
 - [documents.md](documents.md) — Document register, revisions, check-out/in, upload
 - [drawings.md](drawings.md) — Drawing register & revisions
 - [workflow.md](workflow.md) — Configurable approval/review engine
