@@ -31,9 +31,17 @@ Driven by a generic tenant+project-scoped CRUD factory (auto-numbering, soft-del
 - Foundation: register → me → org → project → list → dashboard → login → refresh-rotate → 401 guard → 409 dup-code. **10/10.**
 - Domain: documents (upload-url→revision→checkout/checkin), RFI (respond→close), submittal (revision→review), workflow (2-step approve→completed, reject→rejected, pending-approvals 1→0), + create/update/soft-delete across all 17 modules with auto-numbering (DOC/RFI/SUB/SNG/NCR/INC/PMT/AST/DWG/TR-001…). **All green.**
 
+### Web app (`apps/web`) — running on `:3000`
+Next.js 14 (App Router, TS) port of the UI prototype, wired to the live API:
+- Login + self-service tenant registration; JWT stored client-side with silent refresh.
+- App shell (topbar + project switcher + sidebar) with auth gating.
+- **Dashboard** (live counters), **Documents** (create + presigned upload→revision + check-out/in), **RFI** (create + respond + close), **Workflows** (start + approve/reject pending), **Snagging / Drawings / Submittals / NCR / HSE** (list + create).
+- All 10 routes compile clean; web typecheck green; CORS verified web→API.
+
+Run both: `pnpm dev:all` (API `:4000` + web `:3000`).
+
 ## ⏭ Next
 
-- **Web app (`apps/web`):** Next.js port of `CDE_UI_Prototype.html` onto the live API (dashboard, documents, workflows, RFI, snagging, HSE screens).
 - **Real file storage:** swap the local upload stub for an S3 adapter behind the same `upload-url` contract.
 - **Workflow depth:** SLA timers, escalation, delegation, parallel (group-any/group-all) steps, templates.
 - **Search + OCR:** Elasticsearch indexing + Textract pipeline for documents.

@@ -6,6 +6,7 @@ import { identityRoutes } from "./modules/identity/identity.routes.js";
 import { organizationRoutes } from "./modules/organization/organization.routes.js";
 import { roleRoutes } from "./modules/role/role.routes.js";
 import { projectRoutes } from "./modules/project/project.routes.js";
+import { userRoutes } from "./modules/user/user.routes.js";
 import { domainRoutes } from "./modules/domain/domain.routes.js";
 
 const API_PREFIX = "/v1";
@@ -79,6 +80,7 @@ export async function buildApp(): Promise<FastifyInstance> {
       await v1.register(identityRoutes);
       await v1.register(organizationRoutes);
       await v1.register(roleRoutes);
+      await v1.register(userRoutes);
       await v1.register(projectRoutes);
       await v1.register(domainRoutes);
     },

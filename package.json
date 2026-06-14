@@ -8,6 +8,8 @@
   },
   "scripts": {
     "dev": "pnpm --filter @cde/api dev",
+    "dev:web": "pnpm --filter @cde/web dev",
+    "dev:all": "pnpm --parallel --filter @cde/api --filter @cde/web dev",
     "build": "pnpm -r build",
     "db:up": "docker compose up -d postgres redis",
     "db:down": "docker compose down",

@@ -30,6 +30,14 @@ const NAV = [
       { href: "/hse", icon: "🦺", label: "HSE" },
     ],
   },
+  {
+    label: "Admin",
+    items: [
+      { href: "/organizations", icon: "🏢", label: "Organizations" },
+      { href: "/users", icon: "👥", label: "Users" },
+      { href: "/projects", icon: "📁", label: "Projects" },
+    ],
+  },
 ];
 
 export function Shell({ children }: { children: ReactNode }) {

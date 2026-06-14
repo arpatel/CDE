@@ -27,9 +27,12 @@ pnpm db:migrate
 # 4. Seed a demo tenant + admin
 pnpm db:seed
 
-# 5. Run the API (http://localhost:4000)
-pnpm dev
+# 5. Run API (:4000) + web (:3000) together
+pnpm dev:all
+# …or individually: pnpm dev   (API)   |   pnpm dev:web   (web)
 ```
+
+Then open **http://localhost:3000** and sign in.
 
 Demo login (from seed): `admin@demo.cde.local` / `Password123!`
 
