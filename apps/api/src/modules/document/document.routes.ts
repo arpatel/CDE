@@ -120,9 +120,21 @@ export async function documentRoutes(app: FastifyInstance): Promise<void> {
         : null;
       if (fields.folderId && !folder) throw ApiError.unprocessable("Folder not found in this project");
 
+      const folderId = folder?.id ?? null;
       const prefix = folder?.docNumberPrefix || project.code;
-      const docCount = await prisma.document.count({ where: { tenantId, projectId } });
-      const docNumber = fields.docNumber?.trim() || `${prefix}-${String(docCount + 1).padStart(4, "0")}`;
+      const provided = fields.docNumber?.trim();
+      let docNumber: string;
+      if (provided) {
+        // Doc Ref must be unique within the folder (root = no folder).
+        const dup = await prisma.document.findFirst({
+          where: { tenantId, projectId, folderId, docNumber: provided, isDeleted: false },
+        });
+        if (dup) throw ApiError.conflict(`Doc Ref "${provided}" already exists in this folder`);
+        docNumber = provided;
+      } else {
+        const count = await prisma.document.count({ where: { tenantId, projectId, folderId } });
+        docNumber = await nextFreeDocNumber(tenantId, projectId, folderId, prefix, count + 1);
+      }
       const title = fields.title?.trim() || baseName(primary.filename);
       const status = fields.status?.trim() || folder?.defaultStatus || "S0-WIP";
       const purposeOfIssue = fields.purposeOfIssue?.trim() || folder?.defaultPurpose || "For Information";
