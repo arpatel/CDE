@@ -6,8 +6,10 @@ Conventions shared by all modules: tenant isolation via `tenant_id`, RFC 7807 er
 
 ## Foundation (Phase 1)
 - [identity.md](identity.md) — Auth, JWT, refresh, registration, MFA/SSO (planned)
-- [organization.md](organization.md) — Tenant organisation tree
+- [organization.md](organization.md) — Tenant organisation tree (as-built)
+- [organization-blueprint.md](organization-blueprint.md) — **Full enterprise spec** (Business Story · BRD · FRS · User Stories · UI · DB · APIs · Permissions · Notifications · Reports · Audit · Testing)
 - [rbac-roles.md](rbac-roles.md) — Roles & permission model
+- [users.md](users.md) — Admin user provisioning (create users, assign org + role)
 - [project.md](project.md) — Projects, members, dashboard
 
 ## Documents & Workflow (Phase 2)

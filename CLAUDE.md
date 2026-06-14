@@ -57,9 +57,15 @@ docs/         compressed SPEC / ROADMAP / ARCHITECTURE + docs/modules/*
 5. (Web) add a route under `apps/web/app/<module>/page.tsx` using `ResourceList` (simple) or a custom page (lifecycle).
 6. Document it in `docs/modules/<module>.md`.
 
+## Database
+
+Runs on the developer's **local PostgreSQL 18**, port **5433**, database **`CDE`**, role **`cde`** (owner of the DB). `DATABASE_URL` in `.env` → `postgresql://cde:cde_dev_password@127.0.0.1:5433/CDE?schema=public`. Apply schema with `prisma migrate deploy`, then `pnpm db:seed`. Docker Compose (`pnpm db:up`) remains as an optional fallback DB on 5432 — not required.
+
 ## Environment / gotchas (Windows + this toolchain)
 
-- API loads env via `--env-file=../../.env` (see `apps/api` scripts); `src/config/env.ts` reads `process.env` and validates.
+- API loads env via `--env-file=../../.env` (see `apps/api` scripts); `src/config/env.ts` reads `process.env` and validates. Changing `.env` requires a full API restart (env is read at process start, not on hot-reload).
+- The DB name `CDE` is **case-sensitive** (created quoted); the connection URL must use `/CDE`, not `/cde`.
+- Provisioning the local DB needed the `cde` role to **own** the `CDE` database (`ALTER DATABASE "CDE" OWNER TO cde;`) so Prisma can create tables in the `public` schema.
 - Prisma CLI run from `packages/db` needs `DATABASE_URL` in scope — set it inline if a command can't find it.
 - pnpm blocks build scripts by default; approved ones are listed under `allowBuilds` in `pnpm-workspace.yaml`.
 - Fastify rejects body-less POSTs without `Content-Type`; a catch-all content-type parser in `app.ts` tolerates them (needed for action endpoints like `/close`, `/approve`).

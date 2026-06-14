@@ -5,7 +5,8 @@ _Last verified: 2026-06-14 — Foundation **and** all domain modules running and
 ## ✅ Running now
 
 ### Foundation (Phase 1)
-- **Infra:** Postgres 16 + Redis 7 via Docker Compose; Prisma migrations applied; demo seed loaded.
+- **Infra:** runs on **local PostgreSQL 18** (port 5433, database `CDE`, role `cde`). Migrations applied + demo seed loaded. (Docker Compose remains an optional fallback DB.)
+- **Admin user management:** Tenant Admin creates **organisations → users (assigned org + role) → projects**; new users log in with role-based permissions. Verified end-to-end on local Postgres. Web pages under **Admin** (Organizations, Users, Projects).
 - **API:** Fastify on `:4000`, RFC 7807 errors, request correlation, pretty logs, bodyless-POST tolerant.
 - **Identity/Auth:** self-service tenant registration, password login, JWT access (15m) + hashed rotating refresh tokens, logout, `/auth/me`.
 - **RBAC:** role-based permission guard; system roles (Tenant Admin/PM/Member) auto-provisioned per tenant.

@@ -72,7 +72,28 @@ model Organization {
   parentId  String?          @map("parent_id") @db.Uuid
   name      String
   type      OrganizationType @default(OTHER)
+  status    String           @default("ACTIVE")
   country   String?
+
+  // Registration / compliance
+  registrationNumber String?   @map("registration_number")
+  taxNumber          String?   @map("tax_number")
+  incorporationDate  DateTime? @map("incorporation_date")
+  website            String?
+
+  // Address
+  addressLine1 String? @map("address_line1")
+  addressLine2 String? @map("address_line2")
+  city         String?
+  state        String?
+  postalCode   String? @map("postal_code")
+
+  // Primary contact
+  phone        String?
+  contactName  String? @map("contact_name")
+  contactEmail String? @map("contact_email")
+  contactPhone String? @map("contact_phone")
+
   createdAt DateTime         @default(now()) @map("created_at")
   updatedAt DateTime         @updatedAt @map("updated_at")
   createdBy String?          @map("created_by") @db.Uuid
@@ -85,6 +106,7 @@ model Organization {
   memberships UserOrgMembership[]
   ownedProjects Project[]         @relation("ProjectOwnerOrg")
 
+  @@unique([tenantId, registrationNumber])
   @@index([tenantId, isDeleted])
   @@map("organizations")
 }

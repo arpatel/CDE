@@ -8,6 +8,8 @@ services:
       POSTGRES_PASSWORD: cde_dev_password
       POSTGRES_DB: cde
     ports:
+      # Host 5432 → container. (Local PostgreSQL 18 runs on 5432? No — it's on
+      # 5433, so 5432 is free for the bundled dev DB.)
       - "5432:5432"
     volumes:
       - cde_pgdata:/var/lib/postgresql/data
