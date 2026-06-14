@@ -138,13 +138,16 @@ function RoleEditor({ role, catalogue, onClose, onSaved }: {
                       <input type="checkbox" checked={allOn} onChange={(e) => toggleModule(g.permissions, e.target.checked)} />
                       {g.module}
                     </label>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 10, paddingLeft: 18 }}>
-                      {g.permissions.map((p) => (
-                        <label key={p} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12 }}>
-                          <input type="checkbox" checked={selected.has(p)} onChange={() => toggle(p)} />
-                          {p.split(":").slice(1).join(":")}
-                        </label>
-                      ))}
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(96px, 1fr))", gap: "4px 10px", paddingLeft: 22 }}>
+                      {g.permissions.map((p) => {
+                        const action = p.split(":").slice(1).join(":");
+                        return (
+                          <label key={p} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12, textTransform: "capitalize" }}>
+                            <input type="checkbox" checked={selected.has(p)} onChange={() => toggle(p)} />
+                            {action}
+                          </label>
+                        );
+                      })}
                     </div>
                   </div>
                 );
