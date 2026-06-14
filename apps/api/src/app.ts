@@ -1,5 +1,6 @@
 import Fastify, { type FastifyInstance } from "fastify";
 import cors from "@fastify/cors";
+import multipart from "@fastify/multipart";
 import { ApiError, toProblemDetails } from "./lib/errors.js";
 import { healthRoutes } from "./modules/health/health.routes.js";
 import { identityRoutes } from "./modules/identity/identity.routes.js";
@@ -7,6 +8,7 @@ import { organizationRoutes } from "./modules/organization/organization.routes.j
 import { roleRoutes } from "./modules/role/role.routes.js";
 import { projectRoutes } from "./modules/project/project.routes.js";
 import { userRoutes } from "./modules/user/user.routes.js";
+import { documentRoutes } from "./modules/document/document.routes.js";
 import { domainRoutes } from "./modules/domain/domain.routes.js";
 
 const API_PREFIX = "/v1";

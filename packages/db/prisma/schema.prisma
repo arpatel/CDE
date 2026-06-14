@@ -254,6 +254,10 @@ model Folder {
   parentId  String?  @map("parent_id") @db.Uuid
   name      String
   path      String   @default("/")
+  // Folder-level defaults used to auto-derive document attributes on upload.
+  docNumberPrefix String? @map("doc_number_prefix")
+  defaultStatus   String? @map("default_status")
+  defaultPurpose  String? @map("default_purpose")
   createdBy String?  @map("created_by") @db.Uuid
   isDeleted Boolean  @default(false) @map("is_deleted")
   createdAt DateTime @default(now()) @map("created_at")
@@ -295,11 +299,17 @@ model DocumentRevision {
   revisionNumber Int      @map("revision_number")
   revisionLabel  String   @map("revision_label")
   fileKey        String   @map("file_key")
+  originalName   String?  @map("original_name")
   fileSize       BigInt   @default(0) @map("file_size")
   mimeType       String?  @map("mime_type")
   checksum       String?
   uploaderId     String?  @map("uploader_id") @db.Uuid
   status         String   @default("uploaded")
+  // Asite-style issue attributes
+  purposeOfIssue    String? @map("purpose_of_issue")
+  revisionNotes     String? @map("revision_notes")
+  secondaryFileKey  String? @map("secondary_file_key")
+  secondaryName     String? @map("secondary_name")
   ocrText        String?  @map("ocr_text")
   createdAt      DateTime @default(now()) @map("created_at")
 
