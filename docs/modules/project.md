@@ -14,8 +14,10 @@ The project is the top-level container every domain record hangs off. Manages pr
 | GET | `/v1/projects/{id}` | `project:read` | Get project |
 | PATCH | `/v1/projects/{id}` | `project:update` | Update (bumps `version`) |
 | DELETE | `/v1/projects/{id}` | `project:update` | Archive (soft delete + status ARCHIVED) |
-| GET | `/v1/projects/{id}/members` | `project:read` | List members |
-| POST | `/v1/projects/{id}/members` | `project:member:manage` | Add member (must be same tenant) |
+| GET | `/v1/projects/{id}/members` | `project:read` | List members (user + project role) |
+| POST | `/v1/projects/{id}/members` | `project:member:manage` | Assign user to project with a role |
+| PATCH | `/v1/projects/{id}/members/{userId}` | `project:member:manage` | Change a member's project role |
+| DELETE | `/v1/projects/{id}/members/{userId}` | `project:member:manage` | Remove a member |
 | GET | `/v1/projects/{id}/dashboard` | `project:read` | Summary counters |
 
 ## Data model
