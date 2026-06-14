@@ -26,3 +26,6 @@ packages/db/prisma/*.db-journal
 
 # docker volumes
 .docker-data/
+
+# local file storage (uploaded documents)
+.storage/

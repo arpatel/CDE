@@ -27,6 +27,8 @@ export async function buildApp(): Promise<FastifyInstance> {
   });
 
   await app.register(cors, { origin: true, credentials: true });
+  // File uploads (documents): up to 200 MB per file.
+  await app.register(multipart, { limits: { fileSize: 200 * 1024 * 1024, files: 5 } });
 
   // Tolerate body-less action POSTs (checkout/close/approve) and JSON sent
   // without an explicit Content-Type — empty body parses to undefined rather
@@ -84,6 +86,7 @@ export async function buildApp(): Promise<FastifyInstance> {
       await v1.register(roleRoutes);
       await v1.register(userRoutes);
       await v1.register(projectRoutes);
+      await v1.register(documentRoutes);
       await v1.register(domainRoutes);
     },
     { prefix: API_PREFIX },
