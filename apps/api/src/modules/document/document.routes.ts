@@ -88,14 +88,175 @@ export async function documentRoutes(app: FastifyInstance): Promise<void> {
   });
 
   app.get("/projects/:projectId/folders", { preHandler: requirePermission("document:read") }, async (req) => {
-    const { tenantId } = ctx(req);
+    const { tenantId, userId, permissions } = ctx(req);
     const { projectId } = req.params as { projectId: string };
-    const items = await prisma.folder.findMany({
+
+    const folders = await prisma.folder.findMany({
       where: { tenantId, projectId, isDeleted: false },
       orderBy: { name: "asc" },
     });
+    const grants = await prisma.folderPermission.findMany({
+      where: { tenantId, folder: { projectId } },
+    });
+
+    const isSuper = permissions.has("*");
+    const canManageAll = isSuper || permissions.has("document:delete");
+    const roleIds = await userRoleIds(tenantId, projectId, userId);
+
+    // Index grants by folder.
+    const byFolder = new Map<string, typeof grants>();
+    for (const g of grants) {
+      const arr = byFolder.get(g.folderId) ?? [];
+      arr.push(g);
+      byFolder.set(g.folderId, arr);
+    }
+    const folderById = new Map(folders.map((f) => [f.id, f]));
+
+    function granted(folderId: string, manageOnly = false): boolean {
+      const gs = byFolder.get(folderId);
+      if (!gs) return false;
+      return gs.some(
+        (g) =>
+          (!manageOnly || g.accessLevel === "manage") &&
+          ((g.principalType === "user" && g.principalId === userId) ||
+            (g.principalType === "role" && roleIds.includes(g.principalId))),
+      );
+    }
+    function directVisible(f: (typeof folders)[number]): boolean {
+      if (isSuper) return true;
+      const restricted = (byFolder.get(f.id)?.length ?? 0) > 0;
+      if (!restricted) return true;
+      return f.createdBy === userId || granted(f.id);
+    }
+    // A folder is visible only if it AND every ancestor is visible.
+    const visCache = new Map<string, boolean>();
+    function visible(f: (typeof folders)[number]): boolean {
+      const cached = visCache.get(f.id);
+      if (cached !== undefined) return cached;
+      let v = directVisible(f);
+      if (v && f.parentId) {
+        const parent = folderById.get(f.parentId);
+        if (parent) v = visible(parent);
+      }
+      visCache.set(f.id, v);
+      return v;
+    }
+
+    const items = folders
+      .filter(visible)
+      .map((f) => ({
+        ...f,
+        restricted: (byFolder.get(f.id)?.length ?? 0) > 0,
+        grantCount: byFolder.get(f.id)?.length ?? 0,
+        canManage: canManageAll || f.createdBy === userId || granted(f.id, true),
+      }));
     return { items, total: items.length };
   });
+
+  // Principals that can be granted folder access: this project's members + tenant roles.
+  app.get(
+    "/projects/:projectId/folder-principals",
+    { preHandler: requirePermission("document:read") },
+    async (req) => {
+      const { tenantId } = ctx(req);
+      const { projectId } = req.params as { projectId: string };
+      await assertProject(tenantId, projectId);
+      const members = await prisma.projectMember.findMany({
+        where: { projectId },
+        include: { user: { select: { id: true, displayName: true, email: true } } },
+      });
+      const roles = await prisma.role.findMany({
+        where: { tenantId },
+        select: { id: true, name: true },
+        orderBy: { name: "asc" },
+      });
+      return {
+        users: members.map((m) => m.user),
+        roles,
+      };
+    },
+  );
+
+  // List a folder's access grants (with principal names resolved).
+  app.get(
+    "/projects/:projectId/folders/:id/permissions",
+    { preHandler: requirePermission("document:read") },
+    async (req) => {
+      const { tenantId } = ctx(req);
+      const { projectId, id } = req.params as { projectId: string; id: string };
+      const folder = await prisma.folder.findFirst({ where: { id, tenantId, projectId, isDeleted: false } });
+      if (!folder) throw ApiError.notFound("Folder not found");
+      const grants = await prisma.folderPermission.findMany({ where: { tenantId, folderId: id } });
+      const userIds = grants.filter((g) => g.principalType === "user").map((g) => g.principalId);
+      const roleIds = grants.filter((g) => g.principalType === "role").map((g) => g.principalId);
+      const [users, roles] = await Promise.all([
+        prisma.user.findMany({ where: { id: { in: userIds } }, select: { id: true, displayName: true, email: true } }),
+        prisma.role.findMany({ where: { id: { in: roleIds } }, select: { id: true, name: true } }),
+      ]);
+      const userMap = new Map(users.map((u) => [u.id, u]));
+      const roleMap = new Map(roles.map((r) => [r.id, r]));
+      return {
+        items: grants.map((g) => ({
+          principalType: g.principalType,
+          principalId: g.principalId,
+          accessLevel: g.accessLevel,
+          name:
+            g.principalType === "user"
+              ? userMap.get(g.principalId)?.displayName ?? userMap.get(g.principalId)?.email ?? "Unknown user"
+              : roleMap.get(g.principalId)?.name ?? "Unknown role",
+        })),
+        restricted: grants.length > 0,
+        total: grants.length,
+      };
+    },
+  );
+
+  // Replace a folder's access grants. Empty list = open folder (project-wide).
+  app.put(
+    "/projects/:projectId/folders/:id/permissions",
+    { preHandler: requirePermission("document:update") },
+    async (req) => {
+      const { tenantId, userId } = ctx(req);
+      const { projectId, id } = req.params as { projectId: string; id: string };
+      const folder = await prisma.folder.findFirst({ where: { id, tenantId, projectId, isDeleted: false } });
+      if (!folder) throw ApiError.notFound("Folder not found");
+      const body = parse(GrantsSchema, req.body);
+
+      // Validate every principal belongs to the tenant.
+      for (const g of body.grants) {
+        if (g.principalType === "user") {
+          const u = await prisma.user.findFirst({ where: { id: g.principalId, tenantId }, select: { id: true } });
+          if (!u) throw ApiError.unprocessable(`User ${g.principalId} not in this tenant`);
+        } else {
+          const r = await prisma.role.findFirst({ where: { id: g.principalId, tenantId }, select: { id: true } });
+          if (!r) throw ApiError.unprocessable(`Role ${g.principalId} not in this tenant`);
+        }
+      }
+      // De-duplicate by principal (last write wins).
+      const unique = new Map(body.grants.map((g) => [`${g.principalType}:${g.principalId}`, g]));
+
+      await prisma.$transaction(async (tx) => {
+        await tx.folderPermission.deleteMany({ where: { tenantId, folderId: id } });
+        if (unique.size > 0) {
+          await tx.folderPermission.createMany({
+            data: [...unique.values()].map((g) => ({
+              tenantId,
+              folderId: id,
+              principalType: g.principalType,
+              principalId: g.principalId,
+              accessLevel: g.accessLevel,
+              createdBy: userId,
+            })),
+          });
+        }
+      });
+      await audit({
+        tenantId, userId, action: "folder.permissions.updated", resourceType: "folder", resourceId: id,
+        changes: { grants: unique.size }, ip: req.ip,
+      });
+      return { ok: true, total: unique.size };
+    },
+  );
 
   app.post("/projects/:projectId/folders", { preHandler: requirePermission("document:create") }, async (req, reply) => {
     const { tenantId, userId } = ctx(req);
