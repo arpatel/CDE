@@ -68,6 +68,37 @@ async function request<T>(path: string, opts: RequestInit = {}, allowRetry = tru
   return res.json() as Promise<T>;
 }
 
+// Multipart upload (documents). Lets the browser set the multipart boundary;
+// we only attach the bearer token.
+async function upload<T>(path: string, form: FormData): Promise<T> {
+  const tokens = getTokens();
+  const res = await fetch(`${BASE}${path}`, {
+    method: "POST",
+    headers: tokens?.accessToken ? { Authorization: `Bearer ${tokens.accessToken}` } : {},
+    body: form,
+  });
+  if (!res.ok) throw await toError(res);
+  return res.json() as Promise<T>;
+}
+
+// Authenticated file download → triggers a browser save of the blob.
+async function download(path: string, filename: string): Promise<void> {
+  const tokens = getTokens();
+  const res = await fetch(`${BASE}${path}`, {
+    headers: tokens?.accessToken ? { Authorization: `Bearer ${tokens.accessToken}` } : {},
+  });
+  if (!res.ok) throw await toError(res);
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 export const api = {
   get: <T>(path: string) => request<T>(path),
   post: <T>(path: string, body?: unknown) =>
@@ -75,6 +106,8 @@ export const api = {
   patch: <T>(path: string, body?: unknown) =>
     request<T>(path, { method: "PATCH", body: body ? JSON.stringify(body) : undefined }),
   del: <T>(path: string) => request<T>(path, { method: "DELETE" }),
+  upload,
+  download,
 };
 
 export const fetcher = <T>(path: string) => api.get<T>(path);
