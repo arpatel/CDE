@@ -1,0 +1,50 @@
+# Build Status
+
+_Last verified: 2026-06-14 — Foundation **and** all domain modules running and smoke-tested end-to-end._
+
+## ✅ Running now
+
+### Foundation (Phase 1)
+- **Infra:** Postgres 16 + Redis 7 via Docker Compose; Prisma migrations applied; demo seed loaded.
+- **API:** Fastify on `:4000`, RFC 7807 errors, request correlation, pretty logs, bodyless-POST tolerant.
+- **Identity/Auth:** self-service tenant registration, password login, JWT access (15m) + hashed rotating refresh tokens, logout, `/auth/me`.
+- **RBAC:** role-based permission guard; system roles (Tenant Admin/PM/Member) auto-provisioned per tenant.
+- **Multi-tenancy:** `tenant_id` on every row, pinned from JWT, enforced in every query.
+- **Organizations / Roles / Projects:** CRUD (+ org tree, members, dashboard). Creator auto-added as member.
+- **Audit:** append-only audit log on every create/update/delete.
+
+### Domain modules (Phase 2–3 backend) — all live
+Driven by a generic tenant+project-scoped CRUD factory (auto-numbering, soft-delete, optimistic lock, audit) plus lifecycle endpoints:
+
+- **Documents:** CRUD, presigned upload-url (local stub → S3 later), revisions, check-out/check-in locking.
+- **Drawings:** register CRUD + revisions.
+- **Workflow engine:** start instance with N steps, sequential `approve`/`reject` advancing, auto-complete, `/me/pending-approvals`.
+- **RFI:** CRUD + `respond` (threaded) + `close`/`void`, auto-number.
+- **Submittals:** CRUD + revisions + review (approved/approved-as-noted/revise/rejected → status).
+- **Transmittals, Meetings:** CRUD.
+- **Snagging, NCR/Quality, Inspections, Checklists:** CRUD + filters.
+- **HSE:** incidents, permits (+ `approve`), safety observations.
+- **Assets, Forms (templates + submissions), Tasks:** CRUD.
+- **Notifications:** `/me/notifications` + mark-read.
+
+### Smoke tests (all green)
+- Foundation: register → me → org → project → list → dashboard → login → refresh-rotate → 401 guard → 409 dup-code. **10/10.**
+- Domain: documents (upload-url→revision→checkout/checkin), RFI (respond→close), submittal (revision→review), workflow (2-step approve→completed, reject→rejected, pending-approvals 1→0), + create/update/soft-delete across all 17 modules with auto-numbering (DOC/RFI/SUB/SNG/NCR/INC/PMT/AST/DWG/TR-001…). **All green.**
+
+## ⏭ Next
+
+- **Web app (`apps/web`):** Next.js port of `CDE_UI_Prototype.html` onto the live API (dashboard, documents, workflows, RFI, snagging, HSE screens).
+- **Real file storage:** swap the local upload stub for an S3 adapter behind the same `upload-url` contract.
+- **Workflow depth:** SLA timers, escalation, delegation, parallel (group-any/group-all) steps, templates.
+- **Search + OCR:** Elasticsearch indexing + Textract pipeline for documents.
+
+## Backlog (Phase 4–5)
+
+BIM (IFC viewer) · reporting/analytics (ClickHouse) + Power BI · integrations (P6/M365/SAP) + webhooks · mobile (React Native) + offline · hardening: Postgres **RLS**, argon2id, rate limiting, load/pen test, WCAG AA, i18n, DR.
+
+## Known shortcuts (intentional, tracked)
+
+- Password hashing = scrypt (stdlib); swap to argon2id before production.
+- Permissions resolved per-request from DB; add Redis cache when hot.
+- Tenant isolation enforced in app layer; add Postgres **RLS** as defence-in-depth.
+- Login resolves user by email globally in dev; require tenant domain/SSO routing for prod.
