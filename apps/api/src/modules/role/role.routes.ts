@@ -14,8 +14,37 @@ const CreateSchema = z.object({
 
 const UpdateSchema = CreateSchema.partial();
 
+// Catalogue of assignable permissions, grouped by module. The UI renders these
+// as checkboxes so admins can define roles to their requirement. "*" (super
+// admin / full access) is offered separately by the UI.
+const PERMISSION_CATALOGUE: { module: string; permissions: string[] }[] = [
+  { module: "Organization", permissions: ["organization:read", "organization:create"] },
+  { module: "Users", permissions: ["user:read", "user:manage"] },
+  { module: "Roles", permissions: ["role:read", "role:manage"] },
+  { module: "Projects", permissions: ["project:read", "project:create", "project:update", "project:member:manage"] },
+  { module: "Documents", permissions: ["document:read", "document:create", "document:update"] },
+  { module: "Drawings", permissions: ["drawing:read", "drawing:create", "drawing:update"] },
+  { module: "Workflow", permissions: ["workflow:read", "workflow:manage", "workflow:action"] },
+  { module: "RFI", permissions: ["rfi:read", "rfi:create", "rfi:update"] },
+  { module: "Submittals", permissions: ["submittal:read", "submittal:create", "submittal:update"] },
+  { module: "Transmittals", permissions: ["transmittal:read", "transmittal:create", "transmittal:update"] },
+  { module: "Meetings", permissions: ["meeting:read", "meeting:create", "meeting:update"] },
+  { module: "Snagging", permissions: ["snag:read", "snag:create", "snag:update"] },
+  { module: "Quality / NCR", permissions: ["ncr:read", "ncr:create", "ncr:update", "inspection:read", "inspection:create", "inspection:update", "quality:read", "quality:create", "quality:update"] },
+  { module: "HSE", permissions: ["hse:read", "hse:create", "hse:update", "permit:read", "permit:create", "permit:update"] },
+  { module: "Assets", permissions: ["asset:read", "asset:create", "asset:update"] },
+  { module: "Forms", permissions: ["form:read", "form:create", "form:update"] },
+  { module: "Tasks", permissions: ["task:read", "task:create", "task:update"] },
+  { module: "Audit", permissions: ["audit:read"] },
+];
+
 export async function roleRoutes(app: FastifyInstance): Promise<void> {
   app.addHook("preHandler", authenticate);
+
+  // GET /roles/permissions — catalogue for the role editor
+  app.get("/roles/permissions", { preHandler: requirePermission("role:read") }, async () => {
+    return { groups: PERMISSION_CATALOGUE, wildcard: "*" };
+  });
 
   app.get("/roles", { preHandler: requirePermission("role:read") }, async (req) => {
     const { tenantId } = ctx(req);

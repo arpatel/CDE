@@ -206,6 +206,74 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
     },
   );
 
+  // POST /projects/:id/members/bulk — assign many users (or change their role) at once
+  app.post(
+    "/projects/:id/members/bulk",
+    { preHandler: requirePermission("project:member:manage") },
+    async (req) => {
+      const { tenantId, userId } = ctx(req);
+      const { id } = req.params as { id: string };
+      await assertProject(tenantId, id);
+      const body = parse(
+        z.object({ userIds: z.array(z.string().uuid()).min(1), roleId: z.string().uuid() }),
+        req.body,
+      );
+      const role = await prisma.role.findFirst({ where: { id: body.roleId, tenantId } });
+      if (!role) throw ApiError.unprocessable("Role does not belong to this tenant");
+      const valid = await prisma.user.findMany({
+        where: { id: { in: body.userIds }, tenantId },
+        select: { id: true },
+      });
+      const validIds = new Set(valid.map((u) => u.id));
+
+      let updated = 0;
+      for (const uid of body.userIds) {
+        if (!validIds.has(uid)) continue;
+        await prisma.projectMember.upsert({
+          where: { projectId_userId: { projectId: id, userId: uid } },
+          update: { roleId: body.roleId },
+          create: { projectId: id, userId: uid, roleId: body.roleId, invitedBy: userId, acceptedAt: new Date() },
+        });
+        updated++;
+      }
+      await audit({
+        tenantId,
+        userId,
+        action: "project.member.bulk_assigned",
+        resourceType: "project",
+        resourceId: id,
+        changes: { userIds: body.userIds, roleId: body.roleId },
+        ip: req.ip,
+      });
+      return { updated };
+    },
+  );
+
+  // POST /projects/:id/members/bulk-remove — remove many members at once
+  app.post(
+    "/projects/:id/members/bulk-remove",
+    { preHandler: requirePermission("project:member:manage") },
+    async (req) => {
+      const { tenantId, userId } = ctx(req);
+      const { id } = req.params as { id: string };
+      await assertProject(tenantId, id);
+      const body = parse(z.object({ userIds: z.array(z.string().uuid()).min(1) }), req.body);
+      const result = await prisma.projectMember.deleteMany({
+        where: { projectId: id, userId: { in: body.userIds } },
+      });
+      await audit({
+        tenantId,
+        userId,
+        action: "project.member.bulk_removed",
+        resourceType: "project",
+        resourceId: id,
+        changes: { userIds: body.userIds },
+        ip: req.ip,
+      });
+      return { removed: result.count };
+    },
+  );
+
   // PATCH /projects/:id/members/:memberUserId — change a member's project role
   app.patch(
     "/projects/:id/members/:memberUserId",
