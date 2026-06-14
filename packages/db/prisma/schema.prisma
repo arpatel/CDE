@@ -263,8 +263,32 @@ model Folder {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
+  permissions FolderPermission[]
+
   @@index([tenantId, projectId, parentId, isDeleted])
   @@map("folders")
+}
+
+// Folder-scoped access grants. A folder with NO grants is "open" (visible to any
+// project member with document:read). Once it has ≥1 grant it becomes
+// "restricted" — only the granted users / roles (plus the creator and superusers)
+// can see it. accessLevel: "view" | "edit" | "manage".
+model FolderPermission {
+  id            String   @id @default(uuid()) @db.Uuid
+  tenantId      String   @map("tenant_id") @db.Uuid
+  folderId      String   @map("folder_id") @db.Uuid
+  principalType String   @map("principal_type") // "user" | "role"
+  principalId   String   @map("principal_id") @db.Uuid
+  accessLevel   String   @default("view") @map("access_level")
+  createdBy     String?  @map("created_by") @db.Uuid
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  folder Folder @relation(fields: [folderId], references: [id], onDelete: Cascade)
+
+  @@unique([folderId, principalType, principalId])
+  @@index([tenantId, folderId])
+  @@index([principalType, principalId])
+  @@map("folder_permissions")
 }
 
 model Document {
