@@ -114,10 +114,17 @@ export async function organizationRoutes(app: FastifyInstance): Promise<void> {
         where: { id, tenantId, isDeleted: false },
       });
       if (!existing) throw ApiError.notFound();
-      const org = await prisma.organization.update({
-        where: { id },
-        data: { ...body, version: { increment: 1 } },
-      });
+      const org = await prisma.organization
+        .update({
+          where: { id },
+          data: { ...body, version: { increment: 1 } },
+        })
+        .catch((e: { code?: string }) => {
+          if (e.code === "P2002") {
+            throw ApiError.conflict("An organisation with that registration number already exists");
+          }
+          throw e;
+        });
       await audit({
         tenantId,
         userId,

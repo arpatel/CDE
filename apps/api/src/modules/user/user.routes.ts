@@ -176,10 +176,13 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
     const body = parse(MembershipSchema, req.body);
     await assertTenantOrgAndRole(tenantId, body.organizationId, body.roleId);
 
-    const membership = await prisma.userOrgMembership.upsert({
-      where: { userId_organizationId: { userId: id, organizationId: body.organizationId } },
-      update: { roleId: body.roleId },
-      create: { userId: id, organizationId: body.organizationId, roleId: body.roleId },
+    // Reassign: a user has one primary organisation + role. Replace any existing
+    // membership so admin edits don't accumulate duplicates.
+    const membership = await prisma.$transaction(async (tx) => {
+      await tx.userOrgMembership.deleteMany({ where: { userId: id } });
+      return tx.userOrgMembership.create({
+        data: { userId: id, organizationId: body.organizationId, roleId: body.roleId },
+      });
     });
     await audit({
       tenantId,

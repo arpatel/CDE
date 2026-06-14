@@ -13,16 +13,25 @@ interface Org {
   type: string;
   status: string;
   registrationNumber: string | null;
+  taxNumber: string | null;
+  website: string | null;
+  addressLine1: string | null;
+  addressLine2: string | null;
   city: string | null;
+  state: string | null;
+  postalCode: string | null;
   country: string | null;
   phone: string | null;
   contactName: string | null;
+  contactEmail: string | null;
+  contactPhone: string | null;
 }
 
 const TYPES = ["CLIENT", "CONSULTANT", "CONTRACTOR", "SUBCONTRACTOR", "SUPPLIER", "OTHER"];
+const STATUSES = ["ACTIVE", "INACTIVE", "SUSPENDED", "ARCHIVED"];
 
-// Full create form — identity, registration, address, primary contact.
-const CREATE_FIELDS: Field[] = [
+// Shared field definitions for identity, registration, address, contact.
+const BASE_FIELDS: Field[] = [
   { name: "name", label: "Organization name", required: true, placeholder: "Acme Civil Division" },
   { name: "type", label: "Type", type: "select", required: true, options: TYPES.map((t) => ({ value: t, label: t })) },
   { name: "registrationNumber", label: "Registration number", placeholder: "CN-12345" },
@@ -40,10 +49,20 @@ const CREATE_FIELDS: Field[] = [
   { name: "contactPhone", label: "Contact number", placeholder: "+971 50 000 0000" },
 ];
 
+const CREATE_FIELDS = BASE_FIELDS;
+// Edit additionally exposes the lifecycle status.
+const EDIT_FIELDS: Field[] = [
+  ...BASE_FIELDS,
+  { name: "status", label: "Status", type: "select", options: STATUSES.map((s) => ({ value: s, label: s })) },
+];
+
+const EDITABLE_KEYS = EDIT_FIELDS.map((f) => f.name);
+
 export default function OrganizationsPage() {
   const { me } = useApp();
   const isSuperAdmin = !!me?.permissions.includes("*");
   const [showCreate, setShowCreate] = useState(false);
+  const [editing, setEditing] = useState<Org | null>(null);
   const { data, mutate, isLoading } = useSWR<{ items: Org[] }>("/organizations", fetcher);
 
   async function create(v: Record<string, string>) {
@@ -52,6 +71,23 @@ export default function OrganizationsPage() {
     if (!payload.type) payload.type = "OTHER";
     await api.post("/organizations", payload);
     await mutate();
+  }
+
+  async function update(v: Record<string, string>) {
+    const payload: Record<string, string> = {};
+    for (const [k, val] of Object.entries(v)) if (val !== "") payload[k] = val;
+    await api.patch(`/organizations/${editing!.id}`, payload);
+    await mutate();
+  }
+
+  // Pre-fill the edit form from the selected row.
+  function initialFor(org: Org): Record<string, string> {
+    const init: Record<string, string> = {};
+    for (const k of EDITABLE_KEYS) {
+      const val = (org as unknown as Record<string, unknown>)[k];
+      init[k] = val == null ? "" : String(val);
+    }
+    return init;
   }
 
   const items = data?.items ?? [];
@@ -77,11 +113,11 @@ export default function OrganizationsPage() {
           <div className="table-wrap">
             <table>
               <thead>
-                <tr><th>Name</th><th>Type</th><th>Reg. No.</th><th>Contact</th><th>Location</th><th>Status</th></tr>
+                <tr><th>Name</th><th>Type</th><th>Reg. No.</th><th>Contact</th><th>Location</th><th>Status</th><th></th></tr>
               </thead>
               <tbody>
                 {items.length === 0 ? (
-                  <tr><td colSpan={6}><div className="empty">No organisations yet{isSuperAdmin ? " — create the first one." : "."}</div></td></tr>
+                  <tr><td colSpan={7}><div className="empty">No organisations yet{isSuperAdmin ? " — create the first one." : "."}</div></td></tr>
                 ) : items.map((o) => (
                   <tr key={o.id}>
                     <td style={{ fontWeight: 600 }}>{o.name}</td>
@@ -92,6 +128,11 @@ export default function OrganizationsPage() {
                     </td>
                     <td style={{ fontSize: 12, color: "#64748b" }}>{[o.city, o.country].filter(Boolean).join(", ") || "—"}</td>
                     <td><StatusPill value={o.status} /></td>
+                    <td>
+                      {isSuperAdmin && (
+                        <button className="action-link" onClick={() => setEditing(o)}>Edit</button>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -107,6 +148,17 @@ export default function OrganizationsPage() {
           fields={CREATE_FIELDS}
           onClose={() => setShowCreate(false)}
           onSubmit={create}
+        />
+      )}
+
+      {editing && isSuperAdmin && (
+        <Modal
+          title={`Edit ${editing.name}`}
+          submitLabel="Save changes"
+          fields={EDIT_FIELDS}
+          initialValues={initialFor(editing)}
+          onClose={() => setEditing(null)}
+          onSubmit={update}
         />
       )}
     </Shell>

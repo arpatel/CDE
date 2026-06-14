@@ -10,7 +10,8 @@ Conventions shared by all modules: tenant isolation via `tenant_id`, RFC 7807 er
 - [organization-blueprint.md](organization-blueprint.md) — **Full enterprise spec** (Business Story · BRD · FRS · User Stories · UI · DB · APIs · Permissions · Notifications · Reports · Audit · Testing)
 - [rbac-roles.md](rbac-roles.md) — Roles & permission model
 - [users.md](users.md) — Admin user provisioning (create users, assign org + role)
-- [project.md](project.md) — Projects, members, dashboard
+- [project.md](project.md) — Projects, members, dashboard (as-built)
+- [project-blueprint.md](project-blueprint.md) — **Full enterprise spec** (Business Story · BRD · FRS · User Stories · UI · DB · APIs · Permissions · Reports · Audit · Testing)
 
 ## Documents & Workflow (Phase 2)
 - [documents.md](documents.md) — Document register, revisions, check-out/in, upload

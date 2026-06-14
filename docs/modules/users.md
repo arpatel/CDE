@@ -13,7 +13,7 @@ Lets a **Tenant Admin** provision people: create user accounts, assign each to a
 | POST | `/v1/users` | `user:manage` | Create user + assign org + role |
 | GET | `/v1/users/{id}` | `user:read` | Get user |
 | PATCH | `/v1/users/{id}` | `user:manage` | Update name / status / password |
-| POST | `/v1/users/{id}/memberships` | `user:manage` | (Re)assign organisation + role |
+| POST | `/v1/users/{id}/memberships` | `user:manage` | **Reassign** organisation + role (replaces existing — single primary membership) |
 | DELETE | `/v1/users/{id}` | `user:manage` | Deactivate (status → DISABLED; never hard-deleted) |
 
 ## Business rules

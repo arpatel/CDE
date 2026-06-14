@@ -16,16 +16,18 @@ export function Modal({
   title,
   fields,
   submitLabel = "Create",
+  initialValues,
   onClose,
   onSubmit,
 }: {
   title: string;
   fields: Field[];
   submitLabel?: string;
+  initialValues?: Record<string, string>;
   onClose: () => void;
   onSubmit: (values: Record<string, string>) => Promise<void>;
 }) {
-  const [values, setValues] = useState<Record<string, string>>({});
+  const [values, setValues] = useState<Record<string, string>>(initialValues ?? {});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -56,12 +58,13 @@ export function Modal({
                   rows={3}
                   required={f.required}
                   placeholder={f.placeholder}
+                  defaultValue={initialValues?.[f.name] ?? ""}
                   onChange={(e) => setValues((v) => ({ ...v, [f.name]: e.target.value }))}
                 />
               ) : f.type === "select" ? (
                 <select
                   required={f.required}
-                  defaultValue=""
+                  defaultValue={initialValues?.[f.name] ?? ""}
                   onChange={(e) => setValues((v) => ({ ...v, [f.name]: e.target.value }))}
                 >
                   <option value="" disabled>Select…</option>
@@ -74,6 +77,7 @@ export function Modal({
                   type={f.type ?? "text"}
                   required={f.required}
                   placeholder={f.placeholder}
+                  defaultValue={initialValues?.[f.name] ?? ""}
                   onChange={(e) => setValues((v) => ({ ...v, [f.name]: e.target.value }))}
                 />
               )}

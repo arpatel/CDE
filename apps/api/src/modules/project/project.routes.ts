@@ -32,7 +32,10 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
     const items = await prisma.project.findMany({
       where: { tenantId, isDeleted: false },
       orderBy: { createdAt: "desc" },
-      include: { _count: { select: { members: true } } },
+      include: {
+        _count: { select: { members: true } },
+        ownerOrg: { select: { id: true, name: true, type: true } },
+      },
     });
     return { items, total: items.length };
   });
@@ -41,6 +44,14 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
   app.post("/projects", { preHandler: requirePermission("project:create") }, async (req, reply) => {
     const { tenantId, userId } = ctx(req);
     const body = parse(CreateSchema, req.body);
+
+    // A project must map to an organisation that belongs to this tenant.
+    if (body.ownerOrgId) {
+      const org = await prisma.organization.findFirst({
+        where: { id: body.ownerOrgId, tenantId, isDeleted: false },
+      });
+      if (!org) throw ApiError.unprocessable("Owner organisation does not belong to this tenant");
+    }
 
     const project = await prisma
       .$transaction(async (tx) => {
@@ -89,6 +100,12 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
     const existing = await prisma.project.findFirst({ where: { id, tenantId, isDeleted: false } });
     if (!existing) throw ApiError.notFound();
     const body = parse(UpdateSchema, req.body);
+    if (body.ownerOrgId) {
+      const org = await prisma.organization.findFirst({
+        where: { id: body.ownerOrgId, tenantId, isDeleted: false },
+      });
+      if (!org) throw ApiError.unprocessable("Owner organisation does not belong to this tenant");
+    }
     const project = await prisma.project.update({
       where: { id },
       data: { ...body, version: { increment: 1 } },
