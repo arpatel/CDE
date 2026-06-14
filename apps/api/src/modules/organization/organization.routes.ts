@@ -4,7 +4,12 @@ import { prisma } from "@cde/db";
 import { parse } from "../../lib/validation.js";
 import { ApiError } from "../../lib/errors.js";
 import { audit } from "../../lib/audit.js";
-import { authenticate, ctx, requirePermission } from "../../middleware/authenticate.js";
+import {
+  authenticate,
+  ctx,
+  requirePermission,
+  requireSuperAdmin,
+} from "../../middleware/authenticate.js";
 
 const OrgType = z.enum([
   "CLIENT",
@@ -16,10 +21,29 @@ const OrgType = z.enum([
 ]);
 
 const CreateSchema = z.object({
+  // Identity
   name: z.string().min(2).max(160),
   type: OrgType.default("OTHER"),
-  country: z.string().max(2).optional(),
   parentId: z.string().uuid().optional(),
+  // Registration / compliance
+  registrationNumber: z.string().max(80).optional(),
+  taxNumber: z.string().max(60).optional(),
+  incorporationDate: z.coerce.date().optional(),
+  website: z.string().url().max(255).optional(),
+  // Address
+  addressLine1: z.string().max(200).optional(),
+  addressLine2: z.string().max(200).optional(),
+  city: z.string().max(120).optional(),
+  state: z.string().max(120).optional(),
+  postalCode: z.string().max(20).optional(),
+  country: z.string().min(2).max(2).optional(),
+  // Primary contact
+  phone: z.string().max(40).optional(),
+  contactName: z.string().max(160).optional(),
+  contactEmail: z.string().email().max(160).optional(),
+  contactPhone: z.string().max(40).optional(),
+  // Lifecycle
+  status: z.enum(["ACTIVE", "INACTIVE", "SUSPENDED", "ARCHIVED"]).optional(),
 });
 
 const UpdateSchema = CreateSchema.partial();
@@ -37,16 +61,23 @@ export async function organizationRoutes(app: FastifyInstance): Promise<void> {
     return { items, total: items.length };
   });
 
-  // POST /organizations
+  // POST /organizations — super admin only (tenant-wide governance action)
   app.post(
     "/organizations",
-    { preHandler: requirePermission("organization:create") },
+    { preHandler: requireSuperAdmin },
     async (req, reply) => {
       const { tenantId, userId } = ctx(req);
       const body = parse(CreateSchema, req.body);
-      const org = await prisma.organization.create({
-        data: { ...body, tenantId, createdBy: userId },
-      });
+      const org = await prisma.organization
+        .create({
+          data: { ...body, tenantId, createdBy: userId },
+        })
+        .catch((e: { code?: string }) => {
+          if (e.code === "P2002") {
+            throw ApiError.conflict("An organisation with that registration number already exists");
+          }
+          throw e;
+        });
       await audit({
         tenantId,
         userId,

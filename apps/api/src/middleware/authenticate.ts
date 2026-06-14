@@ -60,6 +60,14 @@ export function requirePermission(...required: string[]) {
   };
 }
 
+// preHandler: only a super admin (Tenant Admin, holder of the "*" permission)
+// may pass. Used for tenant-wide governance actions like creating organizations.
+export async function requireSuperAdmin(req: FastifyRequest, _reply: FastifyReply): Promise<void> {
+  const perms = req.auth?.permissions;
+  if (!perms) throw ApiError.unauthorized();
+  if (!perms.has("*")) throw ApiError.forbidden("Only a super admin can perform this action");
+}
+
 // Convenience accessor that asserts the request is authenticated.
 export function ctx(req: FastifyRequest): AuthContext {
   if (!req.auth) throw ApiError.unauthorized();
