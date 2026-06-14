@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import useSWR from "swr";
 import { Shell } from "@/components/Shell";
 import { Modal, PageHeader, StatusPill, type Field } from "@/components/Modal";
@@ -109,7 +110,12 @@ export default function ProjectsPage() {
                     </td>
                     <td><StatusPill value={p.status} /></td>
                     <td>{p._count?.members ?? "—"}</td>
-                    <td><button className="action-link" onClick={() => setEditing(p)}>Edit</button></td>
+                    <td>
+                      <div className="flex-gap">
+                        <Link className="action-link" href={`/projects/${p.id}`}>Members</Link>
+                        <button className="action-link" onClick={() => setEditing(p)}>Edit</button>
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>
