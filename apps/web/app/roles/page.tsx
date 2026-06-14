@@ -12,8 +12,17 @@ interface Role {
   description: string | null;
   isSystem: boolean;
   permissions: string[];
+  dataScope: string;
 }
 interface Catalogue { groups: { module: string; permissions: string[] }[]; wildcard: string }
+
+// Data-visibility levels for a role.
+const SCOPES = [
+  { value: "OWN", label: "Assigned only", hint: "Sees only projects/records they're assigned to" },
+  { value: "OWN_ORG", label: "Own organization", hint: "Sees all data of their own organization" },
+  { value: "ALL_ORG", label: "All organizations", hint: "Sees every organization's data (like super admin)" },
+];
+const scopeLabel = (s: string) => SCOPES.find((x) => x.value === s)?.label ?? s;
 
 export default function RolesPage() {
   const { data, mutate, isLoading } = useSWR<{ items: Role[] }>("/roles", fetcher);
@@ -42,7 +51,7 @@ export default function RolesPage() {
         <div className="table-card">
           <div className="table-wrap">
             <table>
-              <thead><tr><th>Role</th><th>Description</th><th>Access</th><th>System</th><th></th></tr></thead>
+              <thead><tr><th>Role</th><th>Description</th><th>Access</th><th>Data scope</th><th>System</th><th></th></tr></thead>
               <tbody>
                 {items.map((r) => (
                   <tr key={r.id}>
@@ -53,6 +62,7 @@ export default function RolesPage() {
                         ? <span className="status-pill status-approved">Full access</span>
                         : `${r.permissions.length} permission(s)`}
                     </td>
+                    <td><span className="status-pill status-open">{scopeLabel(r.dataScope)}</span></td>
                     <td>{r.isSystem ? <span className="status-pill status-closed">System</span> : <span className="muted">Custom</span>}</td>
                     <td>
                       {!r.isSystem && (
@@ -91,6 +101,7 @@ function RoleEditor({ role, catalogue, onClose, onSaved }: {
   const [name, setName] = useState(role?.name ?? "");
   const [description, setDescription] = useState(role?.description ?? "");
   const [fullAccess, setFullAccess] = useState(role?.permissions.includes("*") ?? false);
+  const [dataScope, setDataScope] = useState(role?.dataScope ?? "OWN_ORG");
   const [selected, setSelected] = useState<Set<string>>(new Set(role?.permissions.filter((p) => p !== "*") ?? []));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -106,9 +117,10 @@ function RoleEditor({ role, catalogue, onClose, onSaved }: {
     e.preventDefault();
     setBusy(true); setError(null);
     const permissions = fullAccess ? ["*"] : [...selected];
+    const scope = fullAccess ? "ALL_ORG" : dataScope;
     try {
-      if (role) await api.patch(`/roles/${role.id}`, { name, description, permissions });
-      else await api.post("/roles", { name, description, permissions });
+      if (role) await api.patch(`/roles/${role.id}`, { name, description, permissions, dataScope: scope });
+      else await api.post("/roles", { name, description, permissions, dataScope: scope });
       onSaved();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Save failed");
@@ -123,9 +135,16 @@ function RoleEditor({ role, catalogue, onClose, onSaved }: {
           <div className="field"><label>Role name *</label><input required value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Document Controller" /></div>
           <div className="field"><label>Description</label><input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What this role can do" /></div>
 
+          <div className="field">
+            <label>Data access level</label>
+            <select value={fullAccess ? "ALL_ORG" : dataScope} disabled={fullAccess} onChange={(e) => setDataScope(e.target.value)}>
+              {SCOPES.map((s) => <option key={s.value} value={s.value}>{s.label} — {s.hint}</option>)}
+            </select>
+          </div>
+
           <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 600, margin: "8px 0 12px" }}>
             <input type="checkbox" checked={fullAccess} onChange={(e) => setFullAccess(e.target.checked)} />
-            Full access (super admin · <code>*</code>)
+            Full access (super admin · <code>*</code>) — forces “All organizations”
           </label>
 
           {!fullAccess && (

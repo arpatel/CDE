@@ -13,7 +13,7 @@ function hashPassword(password: string): string {
 
 // System permission catalogue (Phase 1 subset). Wildcards supported: "*".
 const SYSTEM_ROLES = [
-  { name: "Tenant Admin", isSystem: true, permissions: ["*"] },
+  { name: "Tenant Admin", isSystem: true, permissions: ["*"], dataScope: "ALL_ORG" },
   {
     name: "Project Manager",
     isSystem: true,
@@ -24,11 +24,13 @@ const SYSTEM_ROLES = [
       "project:member:manage",
       "organization:read",
     ],
+    dataScope: "OWN_ORG",
   },
   {
     name: "Member",
     isSystem: true,
     permissions: ["project:read", "organization:read"],
+    dataScope: "OWN",
   },
 ];
 
@@ -50,12 +52,13 @@ async function main() {
   for (const r of SYSTEM_ROLES) {
     const role = await prisma.role.upsert({
       where: { tenantId_name: { tenantId: tenant.id, name: r.name } },
-      update: { permissions: r.permissions },
+      update: { permissions: r.permissions, dataScope: r.dataScope },
       create: {
         tenantId: tenant.id,
         name: r.name,
         isSystem: r.isSystem,
         permissions: r.permissions,
+        dataScope: r.dataScope,
       },
     });
     roles[r.name] = role.id;

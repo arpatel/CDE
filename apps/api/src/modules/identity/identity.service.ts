@@ -224,17 +224,22 @@ export async function getProfile(userId: string) {
       memberships: {
         include: {
           organization: { select: { id: true, name: true, type: true } },
-          role: { select: { id: true, name: true, permissions: true } },
+          role: { select: { id: true, name: true, permissions: true, dataScope: true } },
         },
       },
     },
   });
   if (!user) throw ApiError.notFound("User not found");
 
+  const rank: Record<string, number> = { OWN: 0, OWN_ORG: 1, ALL_ORG: 2 };
   const permissions = new Set<string>();
+  let dataScope = "OWN";
   for (const m of user.memberships) {
     for (const p of (m.role.permissions as string[]) ?? []) permissions.add(String(p));
+    const s = (m.role.dataScope as string) ?? "OWN_ORG";
+    if ((rank[s] ?? 1) > (rank[dataScope] ?? 0)) dataScope = s;
   }
+  if (permissions.has("*")) dataScope = "ALL_ORG";
 
   return {
     id: user.id,
@@ -249,5 +254,6 @@ export async function getProfile(userId: string) {
       role: { id: m.role.id, name: m.role.name },
     })),
     permissions: [...permissions],
+    dataScope,
   };
 }
