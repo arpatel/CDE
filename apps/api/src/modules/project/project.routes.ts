@@ -181,9 +181,14 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
       // Ensure the target user belongs to the same tenant.
       const target = await prisma.user.findFirst({ where: { id: body.userId, tenantId } });
       if (!target) throw ApiError.unprocessable("User does not belong to this tenant");
+      // Validate the project role belongs to the tenant.
+      if (body.roleId) {
+        const role = await prisma.role.findFirst({ where: { id: body.roleId, tenantId } });
+        if (!role) throw ApiError.unprocessable("Role does not belong to this tenant");
+      }
 
       const member = await prisma.projectMember
-        .create({ data: { projectId: id, invitedBy: userId, ...body } })
+        .create({ data: { projectId: id, invitedBy: userId, acceptedAt: new Date(), ...body } })
         .catch((e: { code?: string }) => {
           if (e.code === "P2002") throw ApiError.conflict("User is already a project member");
           throw e;
@@ -194,10 +199,68 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
         action: "project.member.added",
         resourceType: "project",
         resourceId: id,
-        changes: { userId: body.userId },
+        changes: { userId: body.userId, roleId: body.roleId },
         ip: req.ip,
       });
       return reply.code(201).send(member);
+    },
+  );
+
+  // PATCH /projects/:id/members/:memberUserId — change a member's project role
+  app.patch(
+    "/projects/:id/members/:memberUserId",
+    { preHandler: requirePermission("project:member:manage") },
+    async (req) => {
+      const { tenantId, userId } = ctx(req);
+      const { id, memberUserId } = req.params as { id: string; memberUserId: string };
+      await assertProject(tenantId, id);
+      const body = parse(z.object({ roleId: z.string().uuid() }), req.body);
+      const role = await prisma.role.findFirst({ where: { id: body.roleId, tenantId } });
+      if (!role) throw ApiError.unprocessable("Role does not belong to this tenant");
+      const existing = await prisma.projectMember.findFirst({
+        where: { projectId: id, userId: memberUserId },
+      });
+      if (!existing) throw ApiError.notFound("Member not found");
+      const member = await prisma.projectMember.update({
+        where: { id: existing.id },
+        data: { roleId: body.roleId },
+      });
+      await audit({
+        tenantId,
+        userId,
+        action: "project.member.role_changed",
+        resourceType: "project",
+        resourceId: id,
+        changes: { userId: memberUserId, roleId: body.roleId },
+        ip: req.ip,
+      });
+      return member;
+    },
+  );
+
+  // DELETE /projects/:id/members/:memberUserId — remove a member
+  app.delete(
+    "/projects/:id/members/:memberUserId",
+    { preHandler: requirePermission("project:member:manage") },
+    async (req, reply) => {
+      const { tenantId, userId } = ctx(req);
+      const { id, memberUserId } = req.params as { id: string; memberUserId: string };
+      await assertProject(tenantId, id);
+      const existing = await prisma.projectMember.findFirst({
+        where: { projectId: id, userId: memberUserId },
+      });
+      if (!existing) throw ApiError.notFound("Member not found");
+      await prisma.projectMember.delete({ where: { id: existing.id } });
+      await audit({
+        tenantId,
+        userId,
+        action: "project.member.removed",
+        resourceType: "project",
+        resourceId: id,
+        changes: { userId: memberUserId },
+        ip: req.ip,
+      });
+      return reply.code(204).send();
     },
   );
 
