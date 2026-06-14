@@ -3,26 +3,45 @@ import { prisma } from "@cde/db";
 import { verifyAccessToken } from "../lib/jwt.js";
 import { ApiError } from "../lib/errors.js";
 
+export type DataScope = "OWN" | "OWN_ORG" | "ALL_ORG";
+
 export interface AuthContext {
   userId: string;
   tenantId: string;
   email: string;
   permissions: Set<string>;
+  // Most permissive data-visibility level across the user's roles.
+  dataScope: DataScope;
+  // Organisations the user belongs to (used for OWN_ORG scoping).
+  organizationIds: string[];
 }
 
-// Resolves the effective permission set for a user by aggregating the roles of
-// all their organisation memberships within the tenant. "*" = superuser.
-async function loadPermissions(userId: string): Promise<Set<string>> {
+// Rank so we can take the most permissive scope across a user's roles.
+const SCOPE_RANK: Record<DataScope, number> = { OWN: 0, OWN_ORG: 1, ALL_ORG: 2 };
+
+// Resolves permissions, data scope and org membership for a user by aggregating
+// the roles of all their organisation memberships. "*" = superuser ⇒ ALL_ORG.
+async function loadAccess(userId: string): Promise<{
+  permissions: Set<string>;
+  dataScope: DataScope;
+  organizationIds: string[];
+}> {
   const memberships = await prisma.userOrgMembership.findMany({
     where: { userId },
     include: { role: true },
   });
-  const set = new Set<string>();
+  const permissions = new Set<string>();
+  const organizationIds: string[] = [];
+  let dataScope: DataScope = "OWN";
   for (const m of memberships) {
+    organizationIds.push(m.organizationId);
     const perms = Array.isArray(m.role.permissions) ? m.role.permissions : [];
-    for (const p of perms) set.add(String(p));
+    for (const p of perms) permissions.add(String(p));
+    const roleScope = ((m.role as { dataScope?: string }).dataScope ?? "OWN_ORG") as DataScope;
+    if (SCOPE_RANK[roleScope] > SCOPE_RANK[dataScope]) dataScope = roleScope;
   }
-  return set;
+  if (permissions.has("*")) dataScope = "ALL_ORG";
+  return { permissions, dataScope, organizationIds };
 }
 
 // preHandler: verifies the bearer token and attaches the auth context (incl.
@@ -39,12 +58,14 @@ export async function authenticate(req: FastifyRequest, _reply: FastifyReply): P
   } catch {
     throw ApiError.unauthorized("Token is invalid or expired");
   }
-  const permissions = await loadPermissions(claims.sub);
+  const { permissions, dataScope, organizationIds } = await loadAccess(claims.sub);
   req.auth = {
     userId: claims.sub,
     tenantId: claims.tenantId,
     email: claims.email,
     permissions,
+    dataScope,
+    organizationIds,
   };
 }
 

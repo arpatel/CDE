@@ -11,8 +11,9 @@ import { ApiError } from "../../lib/errors.js";
 import { audit } from "../../lib/audit.js";
 
 // System role catalogue provisioned for every new tenant (Phase 1 subset).
+// dataScope: ALL_ORG (everything) | OWN_ORG (own org) | OWN (assigned only).
 const SYSTEM_ROLES = [
-  { name: "Tenant Admin", permissions: ["*"] },
+  { name: "Tenant Admin", permissions: ["*"], dataScope: "ALL_ORG" },
   {
     name: "Project Manager",
     permissions: [
@@ -24,8 +25,9 @@ const SYSTEM_ROLES = [
       "organization:create",
       "role:read",
     ],
+    dataScope: "OWN_ORG",
   },
-  { name: "Member", permissions: ["project:read", "organization:read"] },
+  { name: "Member", permissions: ["project:read", "organization:read"], dataScope: "OWN" },
 ];
 
 export interface TokenPair {
@@ -92,6 +94,7 @@ export async function registerTenant(input: {
           name: r.name,
           isSystem: true,
           permissions: r.permissions,
+          dataScope: r.dataScope,
         },
       });
       roleIds[r.name] = role.id;

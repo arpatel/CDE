@@ -10,6 +10,8 @@ const CreateSchema = z.object({
   name: z.string().min(2).max(80),
   description: z.string().max(280).optional(),
   permissions: z.array(z.string()).default([]),
+  // Data visibility level for users holding this role.
+  dataScope: z.enum(["OWN", "OWN_ORG", "ALL_ORG"]).default("OWN_ORG"),
 });
 
 const UpdateSchema = CreateSchema.partial();

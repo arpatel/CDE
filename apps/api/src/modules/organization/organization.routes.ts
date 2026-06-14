@@ -51,11 +51,14 @@ const UpdateSchema = CreateSchema.partial();
 export async function organizationRoutes(app: FastifyInstance): Promise<void> {
   app.addHook("preHandler", authenticate);
 
-  // GET /organizations
+  // GET /organizations — scoped: ALL_ORG sees every org; OWN/OWN_ORG see only
+  // the organisation(s) the caller belongs to.
   app.get("/organizations", async (req) => {
-    const { tenantId } = ctx(req);
+    const { tenantId, dataScope, organizationIds } = ctx(req);
+    const where: Record<string, unknown> = { tenantId, isDeleted: false };
+    if (dataScope !== "ALL_ORG") where.id = { in: organizationIds };
     const items = await prisma.organization.findMany({
-      where: { tenantId, isDeleted: false },
+      where,
       orderBy: { name: "asc" },
     });
     return { items, total: items.length };

@@ -28,9 +28,20 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
 
   // GET /projects
   app.get("/projects", { preHandler: requirePermission("project:read") }, async (req) => {
-    const { tenantId } = ctx(req);
+    const { tenantId, userId, dataScope, organizationIds } = ctx(req);
+    const where: Record<string, unknown> = { tenantId, isDeleted: false };
+    if (dataScope === "OWN_ORG") {
+      // Projects owned by the caller's org(s), or where they are a member.
+      where.OR = [
+        { ownerOrgId: { in: organizationIds } },
+        { members: { some: { userId } } },
+      ];
+    } else if (dataScope === "OWN") {
+      // Only projects the caller is assigned to.
+      where.members = { some: { userId } };
+    }
     const items = await prisma.project.findMany({
-      where: { tenantId, isDeleted: false },
+      where,
       orderBy: { createdAt: "desc" },
       include: {
         _count: { select: { members: true } },

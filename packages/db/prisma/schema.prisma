@@ -139,6 +139,9 @@ model Role {
   description String?
   isSystem    Boolean  @default(false) @map("is_system")
   permissions Json     @default("[]")
+  // Data visibility level: OWN (assigned records only) | OWN_ORG (own org's data)
+  // | ALL_ORG (every org's data, like super admin).
+  dataScope   String   @default("OWN_ORG") @map("data_scope")
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
 

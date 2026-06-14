@@ -76,11 +76,16 @@ async function assertTenantOrgAndRole(tenantId: string, organizationId: string, 
 export async function userRoutes(app: FastifyInstance): Promise<void> {
   app.addHook("preHandler", authenticate);
 
-  // GET /users — list tenant users
+  // GET /users — list tenant users (scoped: ALL_ORG sees all; OWN/OWN_ORG see
+  // only users who share the caller's organisation(s)).
   app.get("/users", { preHandler: requirePermission("user:read") }, async (req) => {
-    const { tenantId } = ctx(req);
+    const { tenantId, dataScope, organizationIds } = ctx(req);
+    const where: Record<string, unknown> = { tenantId };
+    if (dataScope !== "ALL_ORG") {
+      where.memberships = { some: { organizationId: { in: organizationIds } } };
+    }
     const users = await prisma.user.findMany({
-      where: { tenantId },
+      where,
       orderBy: { createdAt: "desc" },
       include: membershipInclude,
     });
