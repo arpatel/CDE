@@ -419,6 +419,15 @@ export async function documentRoutes(app: FastifyInstance): Promise<void> {
       const revisionLabel = fields.revisionLabel?.trim() || "P01";
       const type = fields.type?.trim() || "general";
 
+      // Configurable attribute values — validate against the sets applicable to
+      // this folder, enforcing mandatory fields.
+      const attrValues = parseAttributesField(fields.attributes);
+      const applicable = await applicableAttributes(tenantId, projectId, folderId);
+      const missing = applicable
+        .filter((a) => a.mandatory && isEmptyValue(attrValues[a.id]))
+        .map((a) => a.name);
+      if (missing.length) throw ApiError.unprocessable(`Missing required attribute(s): ${missing.join(", ")}`);
+
       const docId = randomUUID();
       const revId = randomUUID();
       const fileKey = revFileKey(tenantId, projectId, docId, revId, primary.filename);
@@ -441,6 +450,7 @@ export async function documentRoutes(app: FastifyInstance): Promise<void> {
               docNumber,
               type,
               status,
+              attributes: attrValues,
               createdBy: userId,
             },
           });
