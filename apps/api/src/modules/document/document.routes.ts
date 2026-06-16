@@ -158,6 +158,57 @@ async function computeFolderAccess(
   return { rows, visibleIds: new Set(rows.map((r) => r.id)), isSuper };
 }
 
+// Resolve the active configurable attributes that apply to a folder: every
+// active attribute belonging to an active set that is either project-level or
+// folder-level and lists this folder in its locations.
+async function applicableAttributes(tenantId: string, projectId: string, folderId: string | null) {
+  const sets = await prisma.attributeSet.findMany({
+    where: { tenantId, projectId, isDeleted: false, status: "active" },
+    select: { id: true, name: true, hierarchy: true, locations: true },
+  });
+  const applicable = sets.filter(
+    (s) =>
+      s.hierarchy === "project" ||
+      (s.hierarchy === "folder" && folderId != null && Array.isArray(s.locations) && (s.locations as string[]).includes(folderId)),
+  );
+  if (applicable.length === 0) return [] as ApplicableAttr[];
+  const setName = new Map(applicable.map((s) => [s.id, s.name]));
+  const attrs = await prisma.configurableAttribute.findMany({
+    where: { tenantId, projectId, isDeleted: false, status: "active", setId: { in: applicable.map((s) => s.id) } },
+    orderBy: { name: "asc" },
+  });
+  return attrs.map((a) => ({
+    id: a.id,
+    name: a.name,
+    controlType: a.controlType,
+    mandatory: a.mandatory,
+    options: Array.isArray(a.options) ? (a.options as string[]) : [],
+    defaultValue: a.defaultValue,
+    setId: a.setId,
+    setName: a.setId ? setName.get(a.setId) ?? null : null,
+  }));
+}
+type ApplicableAttr = {
+  id: string; name: string; controlType: string; mandatory: boolean;
+  options: string[]; defaultValue: string | null; setId: string | null; setName: string | null;
+};
+
+function parseAttributesField(raw: string | undefined): Record<string, unknown> {
+  if (!raw) return {};
+  try {
+    const v = JSON.parse(raw);
+    return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+}
+function isEmptyValue(v: unknown): boolean {
+  if (v === undefined || v === null) return true;
+  if (typeof v === "string") return v.trim() === "";
+  if (Array.isArray(v)) return v.length === 0;
+  return false;
+}
+
 const AttributesSchema = z.object({
   title: z.string().min(1).max(300).optional(),
   docNumber: z.string().max(120).optional(),
@@ -246,6 +297,17 @@ export async function documentRoutes(app: FastifyInstance): Promise<void> {
         createdAt: d.createdAt.toISOString(),
       };
     });
+    return { items, total: items.length };
+  });
+
+  // Configurable attributes that apply when uploading into a given folder
+  // (?folderId=…; omit for project root). Drives the dynamic upload form fields.
+  app.get("/projects/:projectId/applicable-attributes", { preHandler: requirePermission("document:read") }, async (req) => {
+    const { tenantId } = ctx(req);
+    const { projectId } = req.params as { projectId: string };
+    await assertProject(tenantId, projectId);
+    const folderId = (req.query as { folderId?: string }).folderId || null;
+    const items = await applicableAttributes(tenantId, projectId, folderId);
     return { items, total: items.length };
   });
 
