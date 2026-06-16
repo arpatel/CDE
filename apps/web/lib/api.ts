@@ -81,6 +81,19 @@ async function upload<T>(path: string, form: FormData): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+// Authenticated fetch of a file as a blob for inline preview. Caller is
+// responsible for URL.revokeObjectURL(url) when the viewer closes.
+async function openInline(path: string): Promise<{ url: string; blob: Blob; type: string }> {
+  const tokens = getTokens();
+  const res = await fetch(`${BASE}${path}`, {
+    headers: tokens?.accessToken ? { Authorization: `Bearer ${tokens.accessToken}` } : {},
+  });
+  if (!res.ok) throw await toError(res);
+  const blob = await res.blob();
+  const type = res.headers.get("content-type") || blob.type || "application/octet-stream";
+  return { url: URL.createObjectURL(blob), blob, type };
+}
+
 // Authenticated file download → triggers a browser save of the blob.
 async function download(path: string, filename: string): Promise<void> {
   const tokens = getTokens();
@@ -110,6 +123,7 @@ export const api = {
   del: <T>(path: string) => request<T>(path, { method: "DELETE" }),
   upload,
   download,
+  openInline,
 };
 
 export const fetcher = <T>(path: string) => api.get<T>(path);

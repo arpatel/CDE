@@ -291,6 +291,54 @@ model FolderPermission {
   @@map("folder_permissions")
 }
 
+// ─── Configurable Attributes (project-template metadata) ─────────────────────
+// User-defined fields grouped into sets, applied at project or folder level —
+// captures consistent structured metadata across a project (Asite-style).
+model AttributeSet {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @map("tenant_id") @db.Uuid
+  projectId String   @map("project_id") @db.Uuid
+  name      String
+  isDefault Boolean  @default(false) @map("is_default")
+  status    String   @default("active") // active | inactive
+  hierarchy String   @default("project") // project | folder
+  locations Json     @default("[]") // folder ids the set applies to (when hierarchy = folder)
+  createdBy String?  @map("created_by") @db.Uuid
+  isDeleted Boolean  @default(false) @map("is_deleted")
+  version   Int      @default(1)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  attributes ConfigurableAttribute[]
+
+  @@index([tenantId, projectId, isDeleted])
+  @@map("attribute_sets")
+}
+
+model ConfigurableAttribute {
+  id           String   @id @default(uuid()) @db.Uuid
+  tenantId     String   @map("tenant_id") @db.Uuid
+  projectId    String   @map("project_id") @db.Uuid
+  setId        String?  @map("set_id") @db.Uuid
+  name         String
+  controlType  String   @map("control_type") // text | textarea | number | date | dropdown | multiselect | radio | checkbox
+  mandatory    Boolean  @default(false)
+  status       String   @default("active") // active | inactive
+  options      Json     @default("[]") // choices for list control types
+  defaultValue String?  @map("default_value")
+  createdBy    String?  @map("created_by") @db.Uuid
+  isDeleted    Boolean  @default(false) @map("is_deleted")
+  version      Int      @default(1)
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  set AttributeSet? @relation(fields: [setId], references: [id])
+
+  @@index([tenantId, projectId, isDeleted])
+  @@index([setId])
+  @@map("configurable_attributes")
+}
+
 model Document {
   id                String   @id @default(uuid()) @db.Uuid
   tenantId          String   @map("tenant_id") @db.Uuid
@@ -301,6 +349,8 @@ model Document {
   type              String   @default("general")
   status            String   @default("draft")
   currentRevisionId String?  @map("current_revision_id") @db.Uuid
+  // Captured configurable-attribute values, keyed by attribute id: { [attrId]: value }.
+  attributes        Json     @default("{}")
   lockedBy          String?  @map("locked_by") @db.Uuid
   lockedAt          DateTime? @map("locked_at")
   createdBy         String?  @map("created_by") @db.Uuid

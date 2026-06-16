@@ -92,6 +92,81 @@ async function userRoleIds(tenantId: string, projectId: string, userId: string):
   return [...ids];
 }
 
+// Resolves which folders a user can see (with inheritance) plus per-folder
+// restricted / grantCount / canManage flags. Shared by the folder tree and the
+// document register so both apply the same access rules.
+async function computeFolderAccess(
+  tenantId: string,
+  projectId: string,
+  userId: string,
+  permissions: Set<string>,
+) {
+  const folders = await prisma.folder.findMany({
+    where: { tenantId, projectId, isDeleted: false },
+    orderBy: { name: "asc" },
+  });
+  const grants = await prisma.folderPermission.findMany({
+    where: { tenantId, folder: { projectId } },
+  });
+  const isSuper = permissions.has("*");
+  const canManageAll = isSuper || permissions.has("document:delete");
+  const roleIds = isSuper ? [] : await userRoleIds(tenantId, projectId, userId);
+
+  const byFolder = new Map<string, typeof grants>();
+  for (const g of grants) {
+    const arr = byFolder.get(g.folderId) ?? [];
+    arr.push(g);
+    byFolder.set(g.folderId, arr);
+  }
+  const folderById = new Map(folders.map((f) => [f.id, f]));
+
+  const granted = (folderId: string, manageOnly = false): boolean => {
+    const gs = byFolder.get(folderId);
+    if (!gs) return false;
+    return gs.some(
+      (g) =>
+        (!manageOnly || g.accessLevel === "manage") &&
+        ((g.principalType === "user" && g.principalId === userId) ||
+          (g.principalType === "role" && roleIds.includes(g.principalId))),
+    );
+  };
+  const directVisible = (f: (typeof folders)[number]): boolean => {
+    if (isSuper) return true;
+    const restricted = (byFolder.get(f.id)?.length ?? 0) > 0;
+    if (!restricted) return true;
+    return f.createdBy === userId || granted(f.id);
+  };
+  const visCache = new Map<string, boolean>();
+  const visible = (f: (typeof folders)[number]): boolean => {
+    const cached = visCache.get(f.id);
+    if (cached !== undefined) return cached;
+    let v = directVisible(f);
+    if (v && f.parentId) {
+      const parent = folderById.get(f.parentId);
+      if (parent) v = visible(parent);
+    }
+    visCache.set(f.id, v);
+    return v;
+  };
+
+  const rows = folders.filter(visible).map((f) => ({
+    ...f,
+    restricted: (byFolder.get(f.id)?.length ?? 0) > 0,
+    grantCount: byFolder.get(f.id)?.length ?? 0,
+    canManage: canManageAll || f.createdBy === userId || granted(f.id, true),
+  }));
+  return { rows, visibleIds: new Set(rows.map((r) => r.id)), isSuper };
+}
+
+const AttributesSchema = z.object({
+  title: z.string().min(1).max(300).optional(),
+  docNumber: z.string().max(120).optional(),
+  status: z.string().max(40).optional(),
+  type: z.string().max(60).optional(),
+  purposeOfIssue: z.string().max(60).optional(),
+  revisionNotes: z.string().max(2000).optional(),
+});
+
 const GrantsSchema = z.object({
   grants: z
     .array(
@@ -119,66 +194,58 @@ export async function documentRoutes(app: FastifyInstance): Promise<void> {
   app.get("/projects/:projectId/folders", { preHandler: requirePermission("document:read") }, async (req) => {
     const { tenantId, userId, permissions } = ctx(req);
     const { projectId } = req.params as { projectId: string };
+    const { rows } = await computeFolderAccess(tenantId, projectId, userId, permissions);
+    return { items: rows, total: rows.length };
+  });
 
-    const folders = await prisma.folder.findMany({
+  // Document register: docs in folders the caller can see, enriched with the
+  // current revision's upload date + author (uploader name).
+  app.get("/projects/:projectId/document-register", { preHandler: requirePermission("document:read") }, async (req) => {
+    const { tenantId, userId, permissions } = ctx(req);
+    const { projectId } = req.params as { projectId: string };
+    await assertProject(tenantId, projectId);
+    const { visibleIds, isSuper } = await computeFolderAccess(tenantId, projectId, userId, permissions);
+
+    const docs = await prisma.document.findMany({
       where: { tenantId, projectId, isDeleted: false },
-      orderBy: { name: "asc" },
+      orderBy: { createdAt: "desc" },
+      take: 500,
     });
-    const grants = await prisma.folderPermission.findMany({
-      where: { tenantId, folder: { projectId } },
+    // Root docs (no folder) are always visible; foldered docs require folder visibility.
+    const filtered = docs.filter((d) => isSuper || d.folderId === null || visibleIds.has(d.folderId));
+
+    const revIds = filtered.map((d) => d.currentRevisionId).filter((x): x is string => !!x);
+    const revs = revIds.length
+      ? await prisma.documentRevision.findMany({ where: { id: { in: revIds } } })
+      : [];
+    const revMap = new Map(revs.map((r) => [r.id, r]));
+
+    const personIds = new Set<string>();
+    for (const d of filtered) if (d.createdBy) personIds.add(d.createdBy);
+    for (const r of revs) if (r.uploaderId) personIds.add(r.uploaderId);
+    const users = personIds.size
+      ? await prisma.user.findMany({ where: { id: { in: [...personIds] } }, select: { id: true, displayName: true, email: true } })
+      : [];
+    const userMap = new Map(users.map((u) => [u.id, u]));
+    const nameOf = (id: string | null | undefined) =>
+      id ? userMap.get(id)?.displayName ?? userMap.get(id)?.email ?? "—" : "—";
+
+    const items = filtered.map((d) => {
+      const rev = d.currentRevisionId ? revMap.get(d.currentRevisionId) : null;
+      const uploaderId = rev?.uploaderId ?? d.createdBy;
+      return {
+        id: d.id,
+        docNumber: d.docNumber,
+        title: d.title,
+        status: d.status,
+        folderId: d.folderId,
+        currentRevisionId: d.currentRevisionId,
+        revisionLabel: rev?.revisionLabel ?? null,
+        uploadedAt: (rev?.createdAt ?? d.createdAt).toISOString(),
+        uploadedBy: nameOf(uploaderId),
+        createdAt: d.createdAt.toISOString(),
+      };
     });
-
-    const isSuper = permissions.has("*");
-    const canManageAll = isSuper || permissions.has("document:delete");
-    const roleIds = await userRoleIds(tenantId, projectId, userId);
-
-    // Index grants by folder.
-    const byFolder = new Map<string, typeof grants>();
-    for (const g of grants) {
-      const arr = byFolder.get(g.folderId) ?? [];
-      arr.push(g);
-      byFolder.set(g.folderId, arr);
-    }
-    const folderById = new Map(folders.map((f) => [f.id, f]));
-
-    function granted(folderId: string, manageOnly = false): boolean {
-      const gs = byFolder.get(folderId);
-      if (!gs) return false;
-      return gs.some(
-        (g) =>
-          (!manageOnly || g.accessLevel === "manage") &&
-          ((g.principalType === "user" && g.principalId === userId) ||
-            (g.principalType === "role" && roleIds.includes(g.principalId))),
-      );
-    }
-    function directVisible(f: (typeof folders)[number]): boolean {
-      if (isSuper) return true;
-      const restricted = (byFolder.get(f.id)?.length ?? 0) > 0;
-      if (!restricted) return true;
-      return f.createdBy === userId || granted(f.id);
-    }
-    // A folder is visible only if it AND every ancestor is visible.
-    const visCache = new Map<string, boolean>();
-    function visible(f: (typeof folders)[number]): boolean {
-      const cached = visCache.get(f.id);
-      if (cached !== undefined) return cached;
-      let v = directVisible(f);
-      if (v && f.parentId) {
-        const parent = folderById.get(f.parentId);
-        if (parent) v = visible(parent);
-      }
-      visCache.set(f.id, v);
-      return v;
-    }
-
-    const items = folders
-      .filter(visible)
-      .map((f) => ({
-        ...f,
-        restricted: (byFolder.get(f.id)?.length ?? 0) > 0,
-        grantCount: byFolder.get(f.id)?.length ?? 0,
-        canManage: canManageAll || f.createdBy === userId || granted(f.id, true),
-      }));
     return { items, total: items.length };
   });
 
@@ -362,42 +429,48 @@ export async function documentRoutes(app: FastifyInstance): Promise<void> {
         await saveBuffer(secondaryFileKey, secondary.buffer);
       }
 
-      const result = await prisma.$transaction(async (tx) => {
-        const doc = await tx.document.create({
-          data: {
-            id: docId,
-            tenantId,
-            projectId,
-            folderId: folder?.id ?? null,
-            title,
-            docNumber,
-            type,
-            status,
-            createdBy: userId,
-          },
+      const result = await prisma
+        .$transaction(async (tx) => {
+          const doc = await tx.document.create({
+            data: {
+              id: docId,
+              tenantId,
+              projectId,
+              folderId: folder?.id ?? null,
+              title,
+              docNumber,
+              type,
+              status,
+              createdBy: userId,
+            },
+          });
+          const rev = await tx.documentRevision.create({
+            data: {
+              id: revId,
+              documentId: docId,
+              revisionNumber: 1,
+              revisionLabel,
+              fileKey,
+              originalName: primary.filename,
+              fileSize: BigInt(saved.size),
+              mimeType: primary.mimetype,
+              checksum: saved.checksum,
+              uploaderId: userId,
+              status,
+              purposeOfIssue,
+              revisionNotes: fields.revisionNotes?.trim() || null,
+              secondaryFileKey,
+              secondaryName: secondary?.filename ?? null,
+            },
+          });
+          await tx.document.update({ where: { id: docId }, data: { currentRevisionId: rev.id } });
+          return { doc, rev };
+        })
+        .catch((e: { code?: string }) => {
+          // DB-level safety net (uq_document_docref_per_folder) for concurrent uploads.
+          if (e.code === "P2002") throw ApiError.conflict(`Doc Ref "${docNumber}" already exists in this folder`);
+          throw e;
         });
-        const rev = await tx.documentRevision.create({
-          data: {
-            id: revId,
-            documentId: docId,
-            revisionNumber: 1,
-            revisionLabel,
-            fileKey,
-            originalName: primary.filename,
-            fileSize: BigInt(saved.size),
-            mimeType: primary.mimetype,
-            checksum: saved.checksum,
-            uploaderId: userId,
-            status,
-            purposeOfIssue,
-            revisionNotes: fields.revisionNotes?.trim() || null,
-            secondaryFileKey,
-            secondaryName: secondary?.filename ?? null,
-          },
-        });
-        await tx.document.update({ where: { id: docId }, data: { currentRevisionId: rev.id } });
-        return { doc, rev };
-      });
 
       await audit({
         tenantId, userId, action: "document.published", resourceType: "document", resourceId: docId,
@@ -458,6 +531,62 @@ export async function documentRoutes(app: FastifyInstance): Promise<void> {
       });
       await audit({ tenantId, userId, action: "document.revised", resourceType: "document", resourceId: id, changes: { revisionLabel: rev.revisionLabel }, ip: req.ip });
       return reply.code(201).send(serializeRevisionDoc(updated, rev));
+    },
+  );
+
+  // ── Edit document attributes (metadata) ──────────────────────────────────
+  app.patch(
+    "/projects/:projectId/documents/:id/attributes",
+    { preHandler: requirePermission("document:update") },
+    async (req) => {
+      const { tenantId, userId } = ctx(req);
+      const { projectId, id } = req.params as { projectId: string; id: string };
+      const doc = await prisma.document.findFirst({ where: { id, tenantId, projectId, isDeleted: false } });
+      if (!doc) throw ApiError.notFound("Document not found");
+      const body = parse(AttributesSchema, req.body);
+
+      // Doc-level fields.
+      const docData: Record<string, unknown> = {};
+      if (body.title !== undefined) docData.title = body.title.trim();
+      if (body.type !== undefined) docData.type = body.type.trim();
+      if (body.status !== undefined) docData.status = body.status.trim();
+      if (body.docNumber !== undefined) {
+        const next = body.docNumber.trim();
+        if (next !== (doc.docNumber ?? "")) {
+          // Doc Ref must stay unique within the folder.
+          const dup = await prisma.document.findFirst({
+            where: { tenantId, projectId, folderId: doc.folderId, docNumber: next, isDeleted: false, id: { not: id } },
+            select: { id: true },
+          });
+          if (dup) throw ApiError.conflict(`Doc Ref "${next}" already exists in this folder`);
+          docData.docNumber = next || null;
+        }
+      }
+
+      // Current-revision attributes (purpose / notes / status).
+      const revData: Record<string, unknown> = {};
+      if (body.purposeOfIssue !== undefined) revData.purposeOfIssue = body.purposeOfIssue.trim() || null;
+      if (body.revisionNotes !== undefined) revData.revisionNotes = body.revisionNotes.trim() || null;
+      if (body.status !== undefined) revData.status = body.status.trim();
+
+      await prisma
+        .$transaction(async (tx) => {
+          if (Object.keys(docData).length) {
+            await tx.document.update({ where: { id }, data: { ...docData, version: { increment: 1 } } });
+          }
+          if (Object.keys(revData).length && doc.currentRevisionId) {
+            await tx.documentRevision.update({ where: { id: doc.currentRevisionId }, data: revData });
+          }
+        })
+        .catch((e: { code?: string }) => {
+          if (e.code === "P2002") throw ApiError.conflict(`Doc Ref "${docData.docNumber}" already exists in this folder`);
+          throw e;
+        });
+      await audit({
+        tenantId, userId, action: "document.attributes.updated", resourceType: "document", resourceId: id,
+        changes: { ...docData, ...revData }, ip: req.ip,
+      });
+      return { ok: true, id };
     },
   );
 

@@ -158,6 +158,24 @@ const formSubmissions = z.object({
   status: z.string().max(40).optional(),
 });
 
+const attributeSets = z.object({
+  name: z.string().min(1).max(160),
+  isDefault: z.boolean().optional(),
+  status: z.enum(["active", "inactive"]).optional(),
+  hierarchy: z.enum(["project", "folder"]).optional(),
+  locations: z.array(z.string().uuid()).optional(),
+});
+
+const configurableAttributes = z.object({
+  name: z.string().min(1).max(160),
+  controlType: z.enum(["text", "textarea", "number", "date", "dropdown", "multiselect", "radio", "checkbox"]),
+  mandatory: z.boolean().optional(),
+  status: z.enum(["active", "inactive"]).optional(),
+  options: z.array(z.string().min(1).max(160)).optional(),
+  defaultValue: z.string().max(400).optional(),
+  setId: z.string().uuid().optional(),
+});
+
 const tasks = z.object({
   title: z.string().min(1).max(240),
   description: z.string().optional(),
@@ -194,4 +212,6 @@ export const DOMAIN_MODULES: CrudConfig[] = [
   def({ plural: "form-templates", delegate: "formTemplate", permission: "form", resourceType: "form_template", createSchema: formTemplates }),
   def({ plural: "form-submissions", delegate: "formSubmission", permission: "form", resourceType: "form_submission", softDelete: false, createdByField: "submittedBy", filterable: ["status", "templateId"], createSchema: formSubmissions }),
   def({ plural: "tasks", delegate: "task", permission: "task", resourceType: "task", filterable: ["status", "priority", "assigneeId"], createSchema: tasks }),
+  def({ plural: "attribute-sets", delegate: "attributeSet", permission: "attribute", resourceType: "attribute_set", filterable: ["status", "hierarchy"], include: { attributes: { select: { id: true, name: true, controlType: true, mandatory: true, status: true } } }, createSchema: attributeSets }),
+  def({ plural: "attributes", delegate: "configurableAttribute", permission: "attribute", resourceType: "attribute", filterable: ["status", "setId", "controlType"], include: { set: { select: { id: true, name: true } } }, createSchema: configurableAttributes }),
 ];

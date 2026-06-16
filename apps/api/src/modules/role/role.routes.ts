@@ -25,6 +25,7 @@ const PERMISSION_CATALOGUE: { module: string; permissions: string[] }[] = [
   { module: "Roles", permissions: ["role:read", "role:manage"] },
   { module: "Projects", permissions: ["project:read", "project:create", "project:update", "project:member:manage"] },
   { module: "Documents", permissions: ["document:read", "document:create", "document:update"] },
+  { module: "Configurable Attributes", permissions: ["attribute:read", "attribute:create", "attribute:update"] },
   { module: "Drawings", permissions: ["drawing:read", "drawing:create", "drawing:update"] },
   { module: "Workflow", permissions: ["workflow:read", "workflow:manage", "workflow:action"] },
   { module: "RFI", permissions: ["rfi:read", "rfi:create", "rfi:update"] },

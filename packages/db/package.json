@@ -13,6 +13,7 @@
     "migrate": "prisma migrate dev",
     "migrate:deploy": "prisma migrate deploy",
     "seed": "tsx src/seed.ts",
+    "ensure-indexes": "tsx src/ensure-indexes.ts",
     "studio": "prisma studio",
     "typecheck": "tsc --noEmit"
   },

@@ -99,6 +99,29 @@ tr:hover td{background:#f8fafc}
 .ctx-item:hover:not(:disabled){background:#f1f5f9}
 .ctx-item:disabled{color:#cbd5e1;cursor:not-allowed}
 
+.doc-row:hover{background:#f8fafc}
+.kebab-btn{background:none;border:1px solid transparent;border-radius:7px;width:28px;height:28px;font-size:18px;line-height:1;color:#64748b;cursor:pointer}
+.kebab-btn:hover{background:#f1f5f9;border-color:#e2e8f0;color:#1e293b}
+.doc-title-link{color:var(--accent)}
+.doc-row:hover .doc-title-link{text-decoration:underline}
+
+/* TABS */
+.tabs{display:flex;gap:4px;margin-bottom:14px;border-bottom:1px solid #e2e8f0}
+.tab{background:none;border:none;padding:9px 16px;font-size:13px;font-weight:600;color:#64748b;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px}
+.tab:hover{color:#1e293b}
+.tab-active{color:var(--accent);border-bottom-color:var(--accent)}
+
+/* ONLINE FILE VIEWER */
+.modal.viewer-modal{max-width:none;width:96vw;height:94vh;max-height:94vh;display:flex;flex-direction:column;padding:0;overflow:hidden}
+.viewer-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 18px;border-bottom:1px solid #e2e8f0}
+.viewer-title{font-size:15px;font-weight:700;color:#1e293b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.viewer-body{flex:1;min-height:0;background:#f1f5f9;overflow:auto;display:flex;flex-direction:column}
+.viewer-frame{flex:1;width:100%;height:100%;border:0;background:#fff}
+.viewer-center{flex:1;display:flex;align-items:center;justify-content:center;padding:18px}
+.viewer-img{max-width:100%;max-height:100%;object-fit:contain;box-shadow:0 4px 18px rgba(15,23,42,.2)}
+.viewer-media{max-width:100%;max-height:100%}
+.viewer-text{flex:1;margin:0;padding:18px;background:#fff;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;line-height:1.55;color:#0f172a;white-space:pre-wrap;word-break:break-word;overflow:auto}
+
 /* KANBAN */
 .kanban{display:grid;grid-template-columns:repeat(5,1fr);gap:14px;align-items:start}
 .kan-col{background:#f8fafc;border-radius:12px;border:1px solid #e2e8f0;overflow:hidden}

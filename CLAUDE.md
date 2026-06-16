@@ -61,6 +61,8 @@ docs/         compressed SPEC / ROADMAP / ARCHITECTURE + docs/modules/*
 
 Runs on the developer's **local PostgreSQL 18**, port **5433**, database **`CDE`**, role **`cde`** (owner of the DB). `DATABASE_URL` in `.env` → `postgresql://cde:cde_dev_password@127.0.0.1:5433/CDE?schema=public`. Apply schema with `prisma migrate deploy`, then `pnpm db:seed`. Docker Compose (`pnpm db:up`) remains as an optional fallback DB on 5432 — not required.
 
+**After every `prisma db push`** run `pnpm --filter @cde/db run ensure-indexes`. It (re)creates DB-level guarantees Prisma's schema DSL can't express — currently the partial unique index `uq_document_docref_per_folder` enforcing **Doc Ref unique per folder** (root `folder_id` NULL coalesced to a sentinel; soft-deleted / auto-numbered rows excluded). `db push` only manages schema-declared indexes and may drop it.
+
 ## Environment / gotchas (Windows + this toolchain)
 
 - API loads env via `--env-file=../../.env` (see `apps/api` scripts); `src/config/env.ts` reads `process.env` and validates. Changing `.env` requires a full API restart (env is read at process start, not on hot-reload).

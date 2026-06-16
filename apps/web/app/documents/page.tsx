@@ -7,7 +7,11 @@ import { Modal, PageHeader, StatusPill } from "@/components/Modal";
 import { useApp } from "@/lib/store";
 import { api, fetcher, ApiError } from "@/lib/api";
 
-interface Doc { id: string; docNumber: string | null; title: string; status: string; currentRevisionId: string | null; folderId?: string | null }
+interface Doc {
+  id: string; docNumber: string | null; title: string; status: string;
+  currentRevisionId: string | null; folderId?: string | null;
+  revisionLabel?: string | null; uploadedAt?: string; uploadedBy?: string;
+}
 interface Folder {
   id: string; name: string; parentId: string | null;
   docNumberPrefix?: string | null; defaultStatus?: string | null; defaultPurpose?: string | null;
@@ -18,17 +22,26 @@ interface Rev { id: string; revisionLabel: string; originalName: string | null; 
 const PURPOSES = ["For Information", "For Review", "For Comment", "For Approval", "For Construction", "For Tender", "As Built"];
 const STATUSES = ["S0-WIP", "S1-Shared", "S2-Shared", "S3-Shared", "S4-Shared", "A-Authorized", "B-Partial Sign-off"];
 
+function fmtDate(iso?: string): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? "—" : d.toLocaleString(undefined, { year: "numeric", month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+}
+
 export default function DocumentsPage() {
   const { projectId } = useApp();
   const [upload, setUpload] = useState<{ mode: "publish" | "revise"; doc?: Doc } | null>(null);
+  const [viewDoc, setViewDoc] = useState<Doc | null>(null);
   const [newFolderParent, setNewFolderParent] = useState<{ parentId: string | null } | null>(null);
   const [manageFolder, setManageFolder] = useState<Folder | null>(null);
   const [selectedFolder, setSelectedFolder] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [menu, setMenu] = useState<{ folder: Folder; x: number; y: number } | null>(null);
+  const [docMenu, setDocMenu] = useState<{ doc: Doc; x: number; y: number } | null>(null);
+  const [editDoc, setEditDoc] = useState<Doc | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
 
-  const key = projectId ? `/projects/${projectId}/documents` : null;
+  const key = projectId ? `/projects/${projectId}/document-register` : null;
   const { data, mutate, isLoading } = useSWR<{ items: Doc[] }>(key, fetcher);
   const { data: folders, mutate: mutateFolders } = useSWR<{ items: Folder[] }>(
     projectId ? `/projects/${projectId}/folders` : null,
@@ -106,14 +119,14 @@ export default function DocumentsPage() {
     });
   }
 
-  // Close the context menu on any outside click / escape.
+  // Close any open context menu on outside click / scroll.
   useEffect(() => {
-    if (!menu) return;
-    const close = () => setMenu(null);
+    if (!menu && !docMenu) return;
+    const close = () => { setMenu(null); setDocMenu(null); };
     window.addEventListener("click", close);
     window.addEventListener("scroll", close, true);
     return () => { window.removeEventListener("click", close); window.removeEventListener("scroll", close, true); };
-  }, [menu]);
+  }, [menu, docMenu]);
 
   return (
     <Shell>
@@ -159,21 +172,36 @@ export default function DocumentsPage() {
             ) : (
               <div className="table-wrap">
                 <table>
-                  <thead><tr><th>Doc Ref</th><th>Title</th><th>Status</th><th>Revision</th><th></th></tr></thead>
+                  <thead><tr><th>Doc Ref</th><th>Title</th><th>Status</th><th>Rev</th><th>Uploaded</th><th>By</th><th></th></tr></thead>
                   <tbody>
                     {shown.length === 0 ? (
-                      <tr><td colSpan={5}><div className="empty">No documents here — click Upload.</div></td></tr>
+                      <tr><td colSpan={7}><div className="empty">No documents here — click Upload.</div></td></tr>
                     ) : shown.map((d) => (
-                      <tr key={d.id}>
-                        <td><div className="flex-gap"><div className="file-icon">DOC</div><span style={{ fontSize: 12, color: "#64748b" }}>{d.docNumber ?? "—"}</span></div></td>
-                        <td style={{ fontWeight: 600 }}>{d.title}</td>
+                      <tr
+                        key={d.id}
+                        className={d.currentRevisionId ? "doc-row" : undefined}
+                        onContextMenu={(e: MouseEvent) => { e.preventDefault(); setDocMenu({ doc: d, x: e.clientX, y: e.clientY }); }}
+                      >
+                        <td onClick={() => d.currentRevisionId && setViewDoc(d)} style={{ cursor: d.currentRevisionId ? "pointer" : "default" }}>
+                          <div className="flex-gap"><div className="file-icon">DOC</div><span style={{ fontSize: 12, color: "#64748b" }}>{d.docNumber ?? "—"}</span></div>
+                        </td>
+                        <td
+                          style={{ fontWeight: 600, cursor: d.currentRevisionId ? "pointer" : "default" }}
+                          onClick={() => d.currentRevisionId && setViewDoc(d)}
+                          title={d.currentRevisionId ? "Open online viewer" : "No file uploaded yet"}
+                        >
+                          <span className={d.currentRevisionId ? "doc-title-link" : undefined}>{d.title}</span>
+                        </td>
                         <td><StatusPill value={d.status} /></td>
-                        <td>{d.currentRevisionId ? <span className="status-pill status-approved">Published</span> : <span className="muted">—</span>}</td>
-                        <td>
-                          <div className="flex-gap">
-                            <button className="action-link" disabled={busyId === d.id} onClick={() => downloadLatest(d)}>Download</button>
-                            <button className="action-link" onClick={() => setUpload({ mode: "revise", doc: d })}>New Revision</button>
-                          </div>
+                        <td>{d.revisionLabel ?? (d.currentRevisionId ? "—" : <span className="muted">—</span>)}</td>
+                        <td style={{ fontSize: 12, color: "#64748b", whiteSpace: "nowrap" }}>{fmtDate(d.uploadedAt)}</td>
+                        <td style={{ fontSize: 12 }}>{d.uploadedBy ?? "—"}</td>
+                        <td style={{ textAlign: "right" }}>
+                          <button
+                            className="kebab-btn"
+                            title="Actions"
+                            onClick={(e) => { e.stopPropagation(); const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); setDocMenu({ doc: d, x: r.right - 180, y: r.bottom + 4 }); }}
+                          >⋯</button>
                         </td>
                       </tr>
                     ))}
@@ -198,6 +226,16 @@ export default function DocumentsPage() {
           >
             👥 Manage access…
           </button>
+        </div>
+      )}
+
+      {/* ── Document right-click menu ──────────────────────────────── */}
+      {docMenu && (
+        <div className="ctx-menu" style={{ top: docMenu.y, left: Math.max(8, docMenu.x) }} onClick={(e) => e.stopPropagation()}>
+          <button className="ctx-item" disabled={!docMenu.doc.currentRevisionId} onClick={() => { setViewDoc(docMenu.doc); setDocMenu(null); }}>👁️ View (online)</button>
+          <button className="ctx-item" onClick={() => { setEditDoc(docMenu.doc); setDocMenu(null); }}>✏️ Edit attributes…</button>
+          <button className="ctx-item" onClick={() => { setUpload({ mode: "revise", doc: docMenu.doc }); setDocMenu(null); }}>⬆️ New revision</button>
+          <button className="ctx-item" disabled={!docMenu.doc.currentRevisionId || busyId === docMenu.doc.id} onClick={() => { const d = docMenu.doc; setDocMenu(null); downloadLatest(d); }}>⬇️ Download</button>
         </div>
       )}
 
@@ -238,7 +276,190 @@ export default function DocumentsPage() {
           onSaved={async () => { setManageFolder(null); await mutateFolders(); }}
         />
       )}
+
+      {viewDoc && projectId && (
+        <FileViewer projectId={projectId} doc={viewDoc} onClose={() => setViewDoc(null)} />
+      )}
+
+      {editDoc && projectId && (
+        <EditAttributesDialog
+          projectId={projectId}
+          doc={editDoc}
+          onClose={() => setEditDoc(null)}
+          onSaved={async () => { setEditDoc(null); await mutate(); }}
+        />
+      )}
     </Shell>
+  );
+}
+
+// ── Edit document attributes ─────────────────────────────────────────────────
+function EditAttributesDialog({ projectId, doc, onClose, onSaved }: {
+  projectId: string; doc: Doc; onClose: () => void; onSaved: () => void;
+}) {
+  const [title, setTitle] = useState(doc.title);
+  const [docRef, setDocRef] = useState(doc.docNumber ?? "");
+  const [status, setStatus] = useState(doc.status);
+  const [purpose, setPurpose] = useState("");
+  const [notes, setNotes] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const loaded = useRef(false);
+
+  // Pull current-revision attributes (purpose / notes) to pre-fill.
+  useEffect(() => {
+    (async () => {
+      try {
+        const revs = await api.get<{ items: Rev[] }>(`/projects/${projectId}/documents/${doc.id}/revisions`);
+        const cur = revs.items[0];
+        if (cur && !loaded.current) {
+          setPurpose(cur.purposeOfIssue ?? "");
+          loaded.current = true;
+        }
+      } catch { /* ignore */ }
+    })();
+  }, [projectId, doc.id]);
+
+  async function save() {
+    setBusy(true); setError(null);
+    const payload: Record<string, string> = { title, status, docNumber: docRef };
+    if (purpose) payload.purposeOfIssue = purpose;
+    if (notes) payload.revisionNotes = notes;
+    try {
+      await api.patch(`/projects/${projectId}/documents/${doc.id}/attributes`, payload);
+      onSaved();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Save failed");
+    } finally { setBusy(false); }
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" style={{ maxWidth: 520 }} onClick={(e) => e.stopPropagation()}>
+        <h3>Edit attributes</h3>
+        <div className="field"><label>Doc Title</label><input value={title} onChange={(e) => setTitle(e.target.value)} /></div>
+        <div className="field"><label>Doc Ref (unique per folder)</label><input value={docRef} onChange={(e) => setDocRef(e.target.value)} placeholder="—" /></div>
+        <div className="field">
+          <label>Status</label>
+          <select value={status} onChange={(e) => setStatus(e.target.value)}>
+            {(STATUSES.includes(status) ? STATUSES : [status, ...STATUSES]).map((s) => <option key={s} value={s}>{s}</option>)}
+          </select>
+        </div>
+        <div className="field">
+          <label>Purpose of Issue</label>
+          <select value={purpose} onChange={(e) => setPurpose(e.target.value)}>
+            <option value="">— unchanged —</option>
+            {PURPOSES.map((p) => <option key={p} value={p}>{p}</option>)}
+          </select>
+        </div>
+        <div className="field"><label>Revision Notes (optional)</label><textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Add a note to the current revision" /></div>
+        {error && <div className="error-text">{error}</div>}
+        <div className="modal-actions">
+          <button className="btn btn-outline" onClick={onClose}>Cancel</button>
+          <button className="btn btn-primary" disabled={busy} onClick={save}>{busy ? "Saving…" : "Save changes"}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Online file viewer ───────────────────────────────────────────────────────
+type ViewKind = "pdf" | "image" | "video" | "audio" | "text" | "unsupported";
+type ViewState =
+  | { phase: "loading" }
+  | { phase: "error"; message: string }
+  | { phase: "ready"; kind: ViewKind; url: string; type: string; name: string; text?: string };
+
+function classifyKind(type: string, name: string): ViewKind {
+  const t = (type || "").toLowerCase();
+  const n = (name || "").toLowerCase();
+  const ext = n.includes(".") ? n.slice(n.lastIndexOf(".") + 1) : "";
+  if (t === "application/pdf" || ext === "pdf") return "pdf";
+  if (t.startsWith("image/") || ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "ico"].includes(ext)) return "image";
+  if (t.startsWith("video/") || ["mp4", "webm", "ogg", "mov"].includes(ext)) return "video";
+  if (t.startsWith("audio/") || ["mp3", "wav", "oga", "m4a"].includes(ext)) return "audio";
+  if (
+    t.startsWith("text/") ||
+    ["application/json", "application/xml", "application/javascript"].includes(t) ||
+    ["txt", "md", "csv", "log", "json", "xml", "yml", "yaml", "html", "css", "js", "ts", "ini", "cfg"].includes(ext)
+  )
+    return "text";
+  return "unsupported";
+}
+
+function FileViewer({ projectId, doc, onClose }: { projectId: string; doc: Doc; onClose: () => void }) {
+  const [state, setState] = useState<ViewState>({ phase: "loading" });
+  const urlRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const revs = await api.get<{ items: Rev[] }>(`/projects/${projectId}/documents/${doc.id}/revisions`);
+        const latest = revs.items[0];
+        if (!latest) { if (!cancelled) setState({ phase: "error", message: "No file/revision to preview." }); return; }
+        const name = latest.originalName ?? doc.title;
+        const { url, blob, type } = await api.openInline(`/projects/${projectId}/documents/${doc.id}/revisions/${latest.id}/download`);
+        urlRef.current = url;
+        const kind = classifyKind(type, name);
+        const text = kind === "text" ? await blob.text() : undefined;
+        if (cancelled) { URL.revokeObjectURL(url); return; }
+        setState({ phase: "ready", kind, url, type, name, text });
+      } catch (err) {
+        if (!cancelled) setState({ phase: "error", message: err instanceof ApiError ? err.message : "Could not load file." });
+      }
+    })();
+    return () => {
+      cancelled = true;
+      if (urlRef.current) { URL.revokeObjectURL(urlRef.current); urlRef.current = null; }
+    };
+  }, [projectId, doc.id, doc.title]);
+
+  async function download() {
+    const revs = await api.get<{ items: Rev[] }>(`/projects/${projectId}/documents/${doc.id}/revisions`);
+    const latest = revs.items[0];
+    if (latest) await api.download(`/projects/${projectId}/documents/${doc.id}/revisions/${latest.id}/download`, latest.originalName ?? doc.title);
+  }
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal viewer-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="viewer-head">
+          <div style={{ minWidth: 0 }}>
+            <div className="viewer-title">{doc.title}</div>
+            <div className="muted" style={{ fontSize: 12 }}>{doc.docNumber ?? "—"}{state.phase === "ready" ? ` · ${state.name}` : ""}</div>
+          </div>
+          <div className="flex-gap">
+            <button className="btn btn-outline btn-sm" onClick={download}>⬇️ Download</button>
+            <button className="btn btn-outline btn-sm" onClick={onClose}>✕ Close</button>
+          </div>
+        </div>
+
+        <div className="viewer-body">
+          {state.phase === "loading" && <div className="center-msg">Loading preview…</div>}
+          {state.phase === "error" && <div className="empty">{state.message}</div>}
+          {state.phase === "ready" && (
+            state.kind === "pdf" ? (
+              <iframe title={state.name} src={state.url} className="viewer-frame" />
+            ) : state.kind === "image" ? (
+              <div className="viewer-center"><img src={state.url} alt={state.name} className="viewer-img" /></div>
+            ) : state.kind === "video" ? (
+              <div className="viewer-center"><video src={state.url} controls className="viewer-media" /></div>
+            ) : state.kind === "audio" ? (
+              <div className="viewer-center"><audio src={state.url} controls /></div>
+            ) : state.kind === "text" ? (
+              <pre className="viewer-text">{state.text}</pre>
+            ) : (
+              <div className="empty" style={{ textAlign: "center" }}>
+                <div style={{ fontSize: 40 }}>📄</div>
+                <p>No inline preview for this file type ({state.type || "unknown"}).</p>
+                <button className="btn btn-primary btn-sm" onClick={download}>⬇️ Download to open</button>
+              </div>
+            )
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 
