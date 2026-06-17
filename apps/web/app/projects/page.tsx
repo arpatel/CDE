@@ -23,10 +23,20 @@ const STATUSES = ["PLANNING", "ACTIVE", "ON_HOLD", "COMPLETED", "ARCHIVED"];
 
 export default function ProjectsPage() {
   const { refreshProjects } = useApp();
+  const router = useRouter();
   const [showCreate, setShowCreate] = useState(false);
   const [editing, setEditing] = useState<Project | null>(null);
+  const [menu, setMenu] = useState<{ project: Project; x: number; y: number } | null>(null);
   const { data, mutate, isLoading } = useSWR<{ items: Project[] }>("/projects", fetcher);
   const { data: orgs } = useSWR<{ items: Org[] }>("/organizations", fetcher);
+
+  useEffect(() => {
+    if (!menu) return;
+    const close = () => setMenu(null);
+    window.addEventListener("click", close);
+    window.addEventListener("scroll", close, true);
+    return () => { window.removeEventListener("click", close); window.removeEventListener("scroll", close, true); };
+  }, [menu]);
 
   const orgOptions = (orgs?.items ?? []).map((o) => ({ value: o.id, label: o.name }));
   const hasOrgs = orgOptions.length > 0;
@@ -98,8 +108,14 @@ export default function ProjectsPage() {
                 {items.length === 0 ? (
                   <tr><td colSpan={6}><div className="empty">No projects yet — create the first one.</div></td></tr>
                 ) : items.map((p) => (
-                  <tr key={p.id}>
-                    <td style={{ fontWeight: 600 }}>{p.name}</td>
+                  <tr
+                    key={p.id}
+                    className="doc-row"
+                    onContextMenu={(e: MouseEvent) => { e.preventDefault(); setMenu({ project: p, x: e.clientX, y: e.clientY }); }}
+                  >
+                    <td style={{ fontWeight: 600, cursor: "pointer" }} onClick={() => router.push(`/projects/${p.id}`)}>
+                      <span className="doc-title-link">{p.name}</span>
+                    </td>
                     <td style={{ color: "#64748b", fontSize: 12 }}>{p.code}</td>
                     <td>
                       {p.ownerOrg ? (
@@ -110,17 +126,25 @@ export default function ProjectsPage() {
                     </td>
                     <td><StatusPill value={p.status} /></td>
                     <td>{p._count?.members ?? "—"}</td>
-                    <td>
-                      <div className="flex-gap">
-                        <Link className="action-link" href={`/projects/${p.id}`}>Members</Link>
-                        <button className="action-link" onClick={() => setEditing(p)}>Edit</button>
-                      </div>
+                    <td style={{ textAlign: "right" }}>
+                      <button
+                        className="kebab-btn"
+                        title="Actions"
+                        onClick={(e) => { e.stopPropagation(); const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); setMenu({ project: p, x: r.right - 170, y: r.bottom + 4 }); }}
+                      >⋯</button>
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
+        </div>
+      )}
+
+      {menu && (
+        <div className="ctx-menu" style={{ top: menu.y, left: Math.max(8, menu.x) }} onClick={(e) => e.stopPropagation()}>
+          <button className="ctx-item" onClick={() => { router.push(`/projects/${menu.project.id}`); setMenu(null); }}>👥 Members &amp; roles</button>
+          <button className="ctx-item" onClick={() => { setEditing(menu.project); setMenu(null); }}>✏️ Edit project</button>
         </div>
       )}
 
