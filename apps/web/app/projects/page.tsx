@@ -6,6 +6,7 @@ import useSWR from "swr";
 import { Shell } from "@/components/Shell";
 import { Modal, PageHeader, StatusPill, type Field } from "@/components/Modal";
 import { api, fetcher } from "@/lib/api";
+import { exportCsv } from "@/lib/export";
 import { useApp } from "@/lib/store";
 
 interface Org { id: string; name: string }
@@ -87,9 +88,18 @@ export default function ProjectsPage() {
         title="Projects"
         subtitle={`${items.length} project(s)`}
         action={
-          <button className="btn btn-primary btn-sm" onClick={() => setShowCreate(true)} disabled={!hasOrgs} title={hasOrgs ? "" : "Create an organisation first"}>
-            + New Project
-          </button>
+          <div className="flex-gap">
+            <button className="btn btn-outline btn-sm" disabled={items.length === 0} onClick={() => exportCsv("projects", [
+              { label: "Name", key: "name" },
+              { label: "Code", key: "code" },
+              { label: "Organization", value: (r) => r.ownerOrg?.name ?? "" },
+              { label: "Status", key: "status" },
+              { label: "Members", value: (r) => r._count?.members ?? 0 },
+            ], items)}>⬇️ Export</button>
+            <button className="btn btn-primary btn-sm" onClick={() => setShowCreate(true)} disabled={!hasOrgs} title={hasOrgs ? "" : "Create an organisation first"}>
+              + New Project
+            </button>
+          </div>
         }
       />
 

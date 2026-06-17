@@ -5,6 +5,7 @@ import useSWR from "swr";
 import { Shell } from "@/components/Shell";
 import { Modal, PageHeader, StatusPill, type Field } from "@/components/Modal";
 import { api, fetcher } from "@/lib/api";
+import { exportCsv } from "@/lib/export";
 import { useApp } from "@/lib/store";
 
 interface Membership { organization: { id: string; name: string }; role: { id: string; name: string } | null }
@@ -102,13 +103,22 @@ export default function UsersPage() {
         title="Users"
         subtitle={`${items.length} user(s) · admin provisioning`}
         action={
-          canManage ? (
-            <button className="btn btn-primary btn-sm" onClick={() => setShowCreate(true)} disabled={!canCreate} title={canCreate ? "" : "Create an organisation first"}>
-              + New User
-            </button>
-          ) : (
-            <span className="muted">You don’t have user-management rights</span>
-          )
+          <div className="flex-gap">
+            <button className="btn btn-outline btn-sm" disabled={items.length === 0} onClick={() => exportCsv("users", [
+              { label: "Name", key: "displayName" },
+              { label: "Email", key: "email" },
+              { label: "Organization", value: (u) => u.memberships.map((m: Membership) => m.organization.name).join("; ") },
+              { label: "Role(s)", value: (u) => u.memberships.map((m: Membership) => m.role?.name ?? "—").join("; ") },
+              { label: "Status", key: "status" },
+            ], items)}>⬇️ Export</button>
+            {canManage ? (
+              <button className="btn btn-primary btn-sm" onClick={() => setShowCreate(true)} disabled={!canCreate} title={canCreate ? "" : "Create an organisation first"}>
+                + New User
+              </button>
+            ) : (
+              <span className="muted">You don’t have user-management rights</span>
+            )}
+          </div>
         }
       />
 

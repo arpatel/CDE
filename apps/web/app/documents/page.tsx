@@ -6,6 +6,7 @@ import { Shell } from "@/components/Shell";
 import { Modal, PageHeader, StatusPill } from "@/components/Modal";
 import { useApp } from "@/lib/store";
 import { api, fetcher, ApiError } from "@/lib/api";
+import { exportCsv } from "@/lib/export";
 
 interface Doc {
   id: string; docNumber: string | null; title: string; status: string;
@@ -145,6 +146,14 @@ export default function DocumentsPage() {
         subtitle={`${items.length} document(s)`}
         action={
           <div className="flex-gap">
+            <button className="btn btn-outline btn-sm" disabled={items.length === 0} onClick={() => exportCsv("document-register", [
+              { label: "Doc Ref", key: "docNumber" },
+              { label: "Title", key: "title" },
+              { label: "Status", key: "status" },
+              { label: "Revision", key: "revisionLabel" },
+              { label: "Uploaded", value: (d) => fmtDate(d.uploadedAt) },
+              { label: "Uploaded By", key: "uploadedBy" },
+            ], items)}>⬇️ Export</button>
             <button className="btn btn-outline btn-sm" onClick={() => setNewFolderParent({ parentId: null })} disabled={!projectId}>🗂️ New Folder</button>
             <button className="btn btn-primary btn-sm" onClick={() => setUpload({ mode: "publish" })} disabled={!projectId}>⬆️ Upload</button>
           </div>

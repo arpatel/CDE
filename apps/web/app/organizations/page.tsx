@@ -5,6 +5,7 @@ import useSWR from "swr";
 import { Shell } from "@/components/Shell";
 import { Modal, PageHeader, StatusPill, type Field } from "@/components/Modal";
 import { api, fetcher } from "@/lib/api";
+import { exportCsv } from "@/lib/export";
 import { useApp } from "@/lib/store";
 
 interface Org {
@@ -98,11 +99,26 @@ export default function OrganizationsPage() {
         title="Organizations"
         subtitle={`${items.length} organisation(s) in this tenant`}
         action={
-          isSuperAdmin ? (
-            <button className="btn btn-primary btn-sm" onClick={() => setShowCreate(true)}>+ New Organization</button>
-          ) : (
-            <span className="muted">Only a super admin can create organizations</span>
-          )
+          <div className="flex-gap">
+            <button className="btn btn-outline btn-sm" disabled={items.length === 0} onClick={() => exportCsv("organizations", [
+              { label: "Name", key: "name" },
+              { label: "Type", key: "type" },
+              { label: "Status", key: "status" },
+              { label: "Registration No.", key: "registrationNumber" },
+              { label: "Tax No.", key: "taxNumber" },
+              { label: "City", key: "city" },
+              { label: "Country", key: "country" },
+              { label: "Phone", key: "phone" },
+              { label: "Contact Name", key: "contactName" },
+              { label: "Contact Email", key: "contactEmail" },
+              { label: "Contact Phone", key: "contactPhone" },
+            ], items)}>⬇️ Export</button>
+            {isSuperAdmin ? (
+              <button className="btn btn-primary btn-sm" onClick={() => setShowCreate(true)}>+ New Organization</button>
+            ) : (
+              <span className="muted">Only a super admin can create organizations</span>
+            )}
+          </div>
         }
       />
 

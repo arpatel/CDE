@@ -6,6 +6,7 @@ import { Shell } from "@/components/Shell";
 import { PageHeader, StatusPill } from "@/components/Modal";
 import { useApp } from "@/lib/store";
 import { api, fetcher, ApiError } from "@/lib/api";
+import { exportCsv } from "@/lib/export";
 
 const CONTROL_TYPES = [
   { value: "text", label: "Text" },
@@ -54,9 +55,29 @@ export default function AttributesPage() {
         subtitle="User-defined fields and attribute sets for this project template"
         action={
           tab === "library" ? (
-            <button className="btn btn-primary btn-sm" onClick={() => setEditAttr("new")} disabled={!projectId}>+ Create Attribute</button>
+            <div className="flex-gap">
+              <button className="btn btn-outline btn-sm" disabled={attrList.length === 0} onClick={() => exportCsv("attributes", [
+                { label: "Attribute Name", key: "name" },
+                { label: "Control Type", value: (a) => CONTROL_TYPES.find((c) => c.value === a.controlType)?.label ?? a.controlType },
+                { label: "Mandatory", value: (a) => (a.mandatory ? "Yes" : "No") },
+                { label: "Status", key: "status" },
+                { label: "Attribute Set", value: (a) => a.set?.name ?? "" },
+                { label: "Options", value: (a) => (a.options ?? []).join("; ") },
+              ], attrList)}>⬇️ Export</button>
+              <button className="btn btn-primary btn-sm" onClick={() => setEditAttr("new")} disabled={!projectId}>+ Create Attribute</button>
+            </div>
           ) : (
-            <button className="btn btn-primary btn-sm" onClick={() => setEditSet("new")} disabled={!projectId}>+ Create Set</button>
+            <div className="flex-gap">
+              <button className="btn btn-outline btn-sm" disabled={setList.length === 0} onClick={() => exportCsv("attribute-sets", [
+                { label: "Set Name", key: "name" },
+                { label: "Default", value: (s) => (s.isDefault ? "Yes" : "No") },
+                { label: "Status", key: "status" },
+                { label: "Hierarchy", key: "hierarchy" },
+                { label: "Locations", value: (s) => s.hierarchy === "project" ? "Whole project" : (s.locations ?? []).map((id: string) => folderName.get(id) ?? id).join("; ") },
+                { label: "Attributes", value: (s) => s.attributes?.length ?? 0 },
+              ], setList)}>⬇️ Export</button>
+              <button className="btn btn-primary btn-sm" onClick={() => setEditSet("new")} disabled={!projectId}>+ Create Set</button>
+            </div>
           )
         }
       />

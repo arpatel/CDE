@@ -159,6 +159,10 @@ function AddUsersToRole({ projectId, role, users, rolesByUser, onClose, onDone }
   function toggle(uid: string) {
     setPicked((s) => { const n = new Set(s); n.has(uid) ? n.delete(uid) : n.add(uid); return n; });
   }
+  const allPicked = selectable.length > 0 && picked.size === selectable.length;
+  function toggleAll() {
+    setPicked(allPicked ? new Set() : new Set(selectable.map((u) => u.id)));
+  }
 
   async function assign() {
     if (picked.size === 0) { setError("Pick at least one user"); return; }
@@ -177,7 +181,12 @@ function AddUsersToRole({ projectId, role, users, rolesByUser, onClose, onDone }
           A user can hold several roles — adding here keeps their existing roles.
         </p>
         <div className="field">
-          <label>Users ({picked.size} selected)</label>
+          <label className="flex-gap" style={{ justifyContent: "space-between" }}>
+            <span>Users ({picked.size} selected) — tick several to add at once</span>
+            {selectable.length > 0 && (
+              <button type="button" className="action-link" onClick={toggleAll}>{allPicked ? "Clear all" : "Select all"}</button>
+            )}
+          </label>
           <div style={{ maxHeight: 320, overflowY: "auto", border: "1px solid #e2e8f0", borderRadius: 8, padding: 8 }}>
             {selectable.length === 0 ? <div className="muted" style={{ fontSize: 12 }}>Everyone is already in this role.</div> : selectable.map((u) => {
               const cur = rolesByUser.get(u.id) ?? [];

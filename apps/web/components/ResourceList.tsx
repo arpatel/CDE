@@ -4,6 +4,7 @@ import { useState, type ReactNode } from "react";
 import useSWR from "swr";
 import { useApp } from "@/lib/store";
 import { api, fetcher } from "@/lib/api";
+import { exportCsv } from "@/lib/export";
 import { Modal, PageHeader, StatusPill, type Field } from "./Modal";
 
 export interface Column {
@@ -47,9 +48,16 @@ export function ResourceList({
         title={title}
         subtitle={subtitle ? subtitle(data?.total ?? 0) : undefined}
         action={
-          <button className="btn btn-primary btn-sm" onClick={() => setShowCreate(true)} disabled={!projectId}>
-            + {createLabel}
-          </button>
+          <div className="flex-gap">
+            <button
+              className="btn btn-outline btn-sm"
+              disabled={!projectId || items.length === 0}
+              onClick={() => exportCsv(title, columns.map((c) => ({ key: c.key, label: c.label })), items)}
+            >⬇️ Export</button>
+            <button className="btn btn-primary btn-sm" onClick={() => setShowCreate(true)} disabled={!projectId}>
+              + {createLabel}
+            </button>
+          </div>
         }
       />
 

@@ -5,6 +5,7 @@ import useSWR from "swr";
 import { Shell } from "@/components/Shell";
 import { PageHeader } from "@/components/Modal";
 import { api, fetcher, ApiError } from "@/lib/api";
+import { exportCsv } from "@/lib/export";
 import { useApp } from "@/lib/store";
 
 interface Role {
@@ -52,7 +53,19 @@ export default function RolesPage() {
       <PageHeader
         title="Roles & Permissions"
         subtitle={`${items.length} role(s) · define access to your requirement`}
-        action={<button className="btn btn-primary btn-sm" onClick={() => setEditor({ role: null })}>+ New Role</button>}
+        action={
+          <div className="flex-gap">
+            <button className="btn btn-outline btn-sm" disabled={items.length === 0} onClick={() => exportCsv("roles", [
+              { label: "Role", key: "name" },
+              { label: "Description", key: "description" },
+              { label: "Access", value: (r) => r.permissions.includes("*") ? "Full access" : `${r.permissions.length} permission(s)` },
+              { label: "Permissions", value: (r) => r.permissions.join(" ") },
+              { label: "Data scope", value: (r) => scopeLabel(r.dataScope) },
+              { label: "Type", value: (r) => r.isSystem ? "System" : "Custom" },
+            ], items)}>⬇️ Export</button>
+            <button className="btn btn-primary btn-sm" onClick={() => setEditor({ role: null })}>+ New Role</button>
+          </div>
+        }
       />
 
       {isLoading ? (
