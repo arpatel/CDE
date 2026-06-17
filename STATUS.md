@@ -17,7 +17,8 @@ _Last verified: 2026-06-14 — Foundation **and** all domain modules running and
 ### Domain modules (Phase 2–3 backend) — all live
 Driven by a generic tenant+project-scoped CRUD factory (auto-numbering, soft-delete, optimistic lock, audit) plus lifecycle endpoints:
 
-- **Documents:** CRUD, presigned upload-url (local stub → S3 later), revisions, check-out/check-in locking.
+- **Documents:** CRUD, presigned upload-url (local stub → S3 later), revisions, check-out/check-in locking. Folder tree (nested) + per-folder Doc Ref uniqueness, folder defaults, document register (upload date/author), online file viewer, and configurable attributes captured on upload.
+- **Folder access control:** folders **private by default**; per-folder grants to user/role at **view / edit (upload) / manage** levels with inherit-from-nearest-ancestor + copy-on-override. Enforced server-side on visibility, upload/revise/metadata-edit, and access changes; creator + superusers bypass.
 - **Drawings:** register CRUD + revisions.
 - **Workflow engine:** start instance with N steps, sequential `approve`/`reject` advancing, auto-complete, `/me/pending-approvals`.
 - **RFI:** CRUD + `respond` (threaded) + `close`/`void`, auto-number.

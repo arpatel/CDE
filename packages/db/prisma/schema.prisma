@@ -273,10 +273,14 @@ model Folder {
   @@map("folders")
 }
 
-// Folder-scoped access grants. A folder with NO grants is "open" (visible to any
-// project member with document:read). Once it has ≥1 grant it becomes
-// "restricted" — only the granted users / roles (plus the creator and superusers)
-// can see it. accessLevel: "view" | "edit" | "manage".
+// Folder-scoped access grants. Folders are PRIVATE by default: a folder with no
+// grants (and no restricting ancestor) is visible only to its creator and
+// superusers. Grants are inherited from the nearest self-or-ancestor that has
+// its own — granting a folder makes it independent and its subfolders inherit it.
+// accessLevel governs what the principal can do:
+//   "view"   → see the folder & its documents
+//   "edit"   → also upload documents / add revisions / edit metadata ("Can upload")
+//   "manage" → also change the folder's access ("Can manage")
 model FolderPermission {
   id            String   @id @default(uuid()) @db.Uuid
   tenantId      String   @map("tenant_id") @db.Uuid

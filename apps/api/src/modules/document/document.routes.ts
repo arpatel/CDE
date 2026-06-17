@@ -148,10 +148,10 @@ async function computeFolderAccess(
     return src;
   };
   const visible = (f: (typeof folders)[number]): boolean => {
-    if (isSuper) return true;
+    if (isSuper || canManageAll) return true;
     if (f.createdBy === userId) return true;
     const src = sourceOf(f);
-    if (!src) return true; // no ancestor restricts ⇒ open
+    if (!src) return false; // private by default: no ACL ⇒ creator + admins only
     return granted(src.id);
   };
 
@@ -167,6 +167,62 @@ async function computeFolderAccess(
     };
   });
   return { rows, visibleIds: new Set(rows.map((r) => r.id)), isSuper };
+}
+
+// Effective access a principal has on a specific folder, honouring inheritance
+// and the private-by-default rule. Levels rank none < view < edit < manage.
+//   view   → can see the folder & its documents
+//   edit   → can also upload / add revisions / edit metadata ("Can upload")
+//   manage → can also change the folder's access ("Can manage")
+// Root (folderId === null) carries no folder ACL, so it is governed purely by
+// module permissions (treated as "manage" here — module guards still apply).
+type FolderLevel = "none" | "view" | "edit" | "manage";
+const LEVEL_RANK: Record<FolderLevel, number> = { none: 0, view: 1, edit: 2, manage: 3 };
+
+async function folderLevelFor(
+  tenantId: string,
+  projectId: string,
+  userId: string,
+  permissions: Set<string>,
+  folderId: string | null,
+): Promise<FolderLevel> {
+  if (permissions.has("*") || permissions.has("document:delete")) return "manage";
+  if (folderId == null) return "manage"; // root: no folder ACL to satisfy
+  const folder = await prisma.folder.findFirst({
+    where: { id: folderId, tenantId, projectId, isDeleted: false },
+    select: { id: true, parentId: true, createdBy: true },
+  });
+  if (!folder) return "none";
+  if (folder.createdBy === userId) return "manage";
+
+  const folders = await prisma.folder.findMany({
+    where: { tenantId, projectId, isDeleted: false },
+    select: { id: true, parentId: true },
+  });
+  const byId = new Map(folders.map((f) => [f.id, f]));
+  const grants = await prisma.folderPermission.findMany({ where: { tenantId, folder: { projectId } } });
+  const byFolder = new Map<string, typeof grants>();
+  for (const g of grants) { const a = byFolder.get(g.folderId) ?? []; a.push(g); byFolder.set(g.folderId, a); }
+
+  // Nearest self-or-ancestor with its own grants governs this folder.
+  let cur: { id: string; parentId: string | null } | undefined = folder;
+  let source: string | null = null;
+  while (cur) {
+    if ((byFolder.get(cur.id)?.length ?? 0) > 0) { source = cur.id; break; }
+    cur = cur.parentId ? byId.get(cur.parentId) : undefined;
+  }
+  if (!source) return "none"; // private by default: no ACL ⇒ creator + admins only
+  const roleIds = await userRoleIds(tenantId, projectId, userId);
+  let best: FolderLevel = "none";
+  for (const g of byFolder.get(source) ?? []) {
+    const mine =
+      (g.principalType === "user" && g.principalId === userId) ||
+      (g.principalType === "role" && roleIds.includes(g.principalId));
+    if (!mine) continue;
+    const lvl = (g.accessLevel as FolderLevel) ?? "view";
+    if (LEVEL_RANK[lvl] > LEVEL_RANK[best]) best = lvl;
+  }
+  return best;
 }
 
 // Resolve the active configurable attributes that apply to a folder: every
@@ -336,13 +392,21 @@ export async function documentRoutes(app: FastifyInstance): Promise<void> {
         where: { projectId },
         include: { user: { select: { id: true, displayName: true, email: true } } },
       });
-      const roles = await prisma.role.findMany({
-        where: { tenantId },
-        select: { id: true, name: true },
-        orderBy: { name: "asc" },
-      });
+      // Only roles assigned within THIS project belong in the access picker —
+      // not org-level tiers or roles used only on other projects.
+      const roleIds = [...new Set(members.map((m) => m.roleId).filter((x): x is string => !!x))];
+      const roles = roleIds.length
+        ? await prisma.role.findMany({
+            where: { tenantId, id: { in: roleIds }, level: "project" },
+            select: { id: true, name: true },
+            orderBy: { name: "asc" },
+          })
+        : [];
+      // A user can hold several roles ⇒ multiple membership rows. De-duplicate
+      // so each project member appears once in the access picker.
+      const usersById = new Map(members.map((m) => [m.user.id, m.user]));
       return {
-        users: members.map((m) => m.user),
+        users: [...usersById.values()],
         roles,
       };
     },
@@ -416,6 +480,11 @@ export async function documentRoutes(app: FastifyInstance): Promise<void> {
       const { projectId, id } = req.params as { projectId: string; id: string };
       const folder = await prisma.folder.findFirst({ where: { id, tenantId, projectId, isDeleted: false } });
       if (!folder) throw ApiError.notFound("Folder not found");
+      // Only someone with "Can manage" on the folder (or its creator / an admin) may change access.
+      const manageLvl = await folderLevelFor(tenantId, projectId, userId, ctx(req).permissions, id);
+      if (LEVEL_RANK[manageLvl] < LEVEL_RANK.manage) {
+        throw ApiError.forbidden("You don't have manage access to this folder");
+      }
       const body = parse(GrantsSchema, req.body);
 
       // Validate every principal belongs to the tenant.
@@ -499,6 +568,11 @@ export async function documentRoutes(app: FastifyInstance): Promise<void> {
       if (fields.folderId && !folder) throw ApiError.unprocessable("Folder not found in this project");
 
       const folderId = folder?.id ?? null;
+      // Per-folder access: uploading requires at least "Can upload" (edit) on the folder.
+      const lvl = await folderLevelFor(tenantId, projectId, userId, ctx(req).permissions, folderId);
+      if (LEVEL_RANK[lvl] < LEVEL_RANK.edit) {
+        throw ApiError.forbidden("You don't have upload access to this folder");
+      }
       const prefix = folder?.docNumberPrefix || project.code;
       const provided = fields.docNumber?.trim();
       let docNumber: string;
@@ -599,6 +673,11 @@ export async function documentRoutes(app: FastifyInstance): Promise<void> {
       const { projectId, id } = req.params as { projectId: string; id: string };
       const doc = await prisma.document.findFirst({ where: { id, tenantId, projectId, isDeleted: false } });
       if (!doc) throw ApiError.notFound();
+      // Adding a revision requires at least "Can upload" (edit) on the doc's folder.
+      const reviseLvl = await folderLevelFor(tenantId, projectId, userId, ctx(req).permissions, doc.folderId);
+      if (LEVEL_RANK[reviseLvl] < LEVEL_RANK.edit) {
+        throw ApiError.forbidden("You don't have upload access to this folder");
+      }
       const { fields, files } = await readMultipart(req);
       const primary = files.file;
       if (!primary) throw ApiError.badRequest("A primary file is required (field 'file')");
@@ -653,6 +732,11 @@ export async function documentRoutes(app: FastifyInstance): Promise<void> {
       const { projectId, id } = req.params as { projectId: string; id: string };
       const doc = await prisma.document.findFirst({ where: { id, tenantId, projectId, isDeleted: false } });
       if (!doc) throw ApiError.notFound("Document not found");
+      // Editing metadata requires at least "Can upload" (edit) on the doc's folder.
+      const attrLvl = await folderLevelFor(tenantId, projectId, userId, ctx(req).permissions, doc.folderId);
+      if (LEVEL_RANK[attrLvl] < LEVEL_RANK.edit) {
+        throw ApiError.forbidden("You don't have edit access to this folder");
+      }
       const body = parse(AttributesSchema, req.body);
 
       // Doc-level fields.

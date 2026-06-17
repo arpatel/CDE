@@ -238,10 +238,10 @@ flowchart LR
 - **Business logic:** On publish, if a field is not supplied by the uploader, the folder default is used; if the folder has none, the project/system default applies (`prefix → project.code`, `status → S0-WIP`, `purpose → For Information`).
 - **Validation:** prefix ≤ 40, status ≤ 40, purpose ≤ 60.
 
-### FR-9 — Folder-scoped Permission Grants *(⏭ target)*
+### FR-9 — Folder-scoped Permission Grants ✅
 
-- **Purpose:** Grant/deny `read`/`create`/`update`/`approve`/`manage` on a folder to a user or role; child folders inherit unless overridden.
-- See [§6](#6-permission-model) and [§19](#19-folder-permission-resolution-flow).
+- **Purpose:** Grant a folder to a user or role at one of three levels — **view** / **edit (upload)** / **manage** — with child folders inheriting unless overridden.
+- **As-built model:** folders are **private by default**; a folder with no grants (and no restricting ancestor) is visible only to its creator and superusers. See [§6](#6-permission-model) and [§19](#19-folder-permission-resolution-flow).
 
 ### FR-10 — Doc Ref Governance ✅ (per-folder uniqueness) / 🟡 (filename icon UI)
 
@@ -256,54 +256,52 @@ flowchart LR
 
 ## 6. Permission Model
 
-> **Precedence is the heart of folder security.** The effective permission for *(user, folder, action)* is resolved most-specific-wins:
->
-> **User-on-folder grant → Role-on-folder grant → Inherited (parent folder) → Project privilege → Default deny**
+> **Folders are PRIVATE by default.** A folder is governed by the **nearest self-or-ancestor that has its own grants** (the "source"). If no such folder exists, only the **creator** and **superusers/admins** can see it. Granting a folder makes it independent and its subfolders inherit from it.
 
-### 6.1 Layers
+### 6.1 Access levels (as-built)
 
-| Layer | Scope | Example |
+Each grant ties a **principal** (`user` or `role`) to a folder at one **access level** (`FolderPermission.accessLevel`), ranked `view < edit < manage`:
+
+| Level | UI label | Capabilities |
 |---|---|---|
-| **Project privileges** | Whole project, via project membership + role | "Reviewer can `document:read` across the project" |
-| **Folder permissions** ⏭ | A folder (and inherited by children) | "Subcontractor X can `read`+`create` in `Drawings/Sub-X` only" |
-| **Role permissions** | The permission catalogue attached to a role | `document:create`, `document:update`, … |
-| **User permissions** ⏭ | A direct grant/deny to one user on one folder | "Deny `delete` to user Y even though their role allows it" |
-| **Data scope** | OWN / OWN_ORG / ALL_ORG cross-cut | Limits *which org's* projects/folders are even visible |
+| `view` | **Can view** | See the folder and its documents. |
+| `edit` | **Can upload** | Also upload documents, add revisions, and edit document metadata. |
+| `manage` | **Can manage** | Also change the folder's access (grant/revoke). |
 
-### 6.2 Precedence (most specific wins)
+A **module permission** (`document:read` / `document:create` / `document:update`) is still required *in addition* — the folder level scopes *which folders* the module permission applies to. Superusers (`*`) and `document:delete` holders bypass folder ACLs; a folder's **creator** always has `manage` on it.
+
+### 6.2 Resolution (per folder)
 
 ```mermaid
 flowchart TD
-  A[Request: user, folder, action] --> B{Explicit USER grant on folder?}
-  B -- yes --> R1[Use user grant: allow/deny]
-  B -- no --> C{Explicit ROLE grant on folder?}
-  C -- yes --> R2[Use role grant]
-  C -- no --> D{Inherited grant from ancestor folder?}
-  D -- yes --> R3[Use inherited grant]
-  D -- no --> E{Project privilege grants action?}
-  E -- yes --> R4[Allow]
-  E -- no --> R5[Default DENY]
+  A[Request: user, folder] --> S{Superuser or document:delete?}
+  S -- yes --> R0[Allow: manage]
+  S -- no --> CR{Folder creator?}
+  CR -- yes --> R0
+  CR -- no --> D{Nearest self-or-ancestor with own grants?}
+  D -- none --> R5[Private: deny - creator/admins only]
+  D -- found 'source' --> G{User or one of the user's project roles granted on source?}
+  G -- yes --> R3[Allow at the highest granted level]
+  G -- no --> R5
 ```
 
 **Rules:**
-- An explicit **deny** at a more specific level overrides an **allow** at a less specific level.
-- A folder with **no explicit grants** inherits its parent's effective permissions.
-- **Data scope** is evaluated *first*: if a folder's project is outside the user's scope (`OWN`/`OWN_ORG`), the folder is invisible regardless of grants.
-- `*` (superuser) short-circuits to **allow**.
+- **Private by default:** no grants anywhere up the chain ⇒ visible only to creator + admins.
+- **Inheritance:** a folder with no own grants follows its nearest ancestor that has grants (computed-at-read). Adding grants to a folder makes it **independent** and its descendants inherit from it.
+- **Removing all grants** reverts a folder to inheriting from the nearest ancestor, or to private if none — it does **not** re-open it to everyone.
+- **Data scope** is evaluated first via `assertProjectAccess`: a folder whose project is outside the user's scope (`OWN`/`OWN_ORG`) is invisible (404) regardless of grants.
+- **Enforcement points:** visibility (folder tree + document register), upload/revise/metadata-edit (require `edit`), and changing access (requires `manage`).
 
-### 6.3 Inheritance
-
-- New child folders **inherit** the parent's grants at creation time (copy-on-write or computed-at-read — implementation chooses computed-at-read for consistency).
-- Editing a parent's grant **propagates** to children that have not overridden it.
-- A child marked "stop inheritance" maintains its own ACL independent of ancestors.
-
-### 6.4 Examples
+### 6.3 Examples
 
 | Scenario | Resolution |
 |---|---|
-| User has Reviewer role (`document:read` project-wide); no folder grants | Can read all readable folders in scope |
-| Subcontractor role denies project-wide read; explicit allow on `Drawings/Sub-X` | Sees only `Drawings/Sub-X` (+ inherited children) |
-| Role allows `delete`; explicit user-deny on `Contracts` folder | Cannot delete in `Contracts`; can elsewhere |
+| Top-level folder, no grants | Only creator + admins see it (private) |
+| Folder granted role "Reviewer" at `view` | Everyone holding Reviewer **in this project** can see it, not upload |
+| Folder granted user X at `edit` | X can see and upload; others (no grant, no ancestor grant) cannot see it |
+| Parent granted, child has no own grants | Child inherits the parent's grants |
+| Child later granted its own ACL | Child becomes independent; its subfolders inherit the child |
+| Grant added then removed | Reverts to inherited (or private) — not open |
 | Folder in another org; user dataScope = `OWN_ORG` | Folder invisible regardless of grants |
 
 > **Permission matrix** appears in the [Appendix](#321-permission-matrix).
@@ -397,22 +395,25 @@ erDiagram
 
 | Method | Path | Permission | Purpose |
 |---|---|---|---|
-| `GET` | `/projects/:projectId/folders` | `document:read` | List folders (tree source) |
+| `GET` | `/projects/:projectId/folders` | `document:read` | List **visible** folders (access-filtered tree) |
 | `POST` | `/projects/:projectId/folders` | `document:create` | Create folder (+ defaults) |
-| `POST` | `/projects/:projectId/documents/publish` | `document:create` | Publish doc into folder (auto-derive + Doc Ref uniqueness) |
+| `POST` | `/projects/:projectId/documents/publish` | `document:create` + folder `edit` | Publish doc into folder (auto-derive + Doc Ref uniqueness) |
+| `POST` | `/projects/:projectId/documents/:id/revise` | `document:update` + folder `edit` | Add a revision |
+| `PATCH` | `/projects/:projectId/documents/:id/attributes` | `document:update` + folder `edit` | Edit document metadata |
+| `GET` | `/projects/:projectId/document-register` | `document:read` | Documents in visible folders (+ upload date/author) |
+| `GET` | `/projects/:projectId/folder-principals` | `document:read` | Access-picker principals: project members (de-duplicated) + **this project's** roles |
+| `GET` | `/projects/:projectId/folders/:id/permissions` | `document:read` | Effective grants (own, or inherited copy) |
+| `PUT` | `/projects/:projectId/folders/:id/permissions` | `document:update` + folder `manage` | Replace the folder's own grants |
 
 ### 8.2 Target endpoints *(⏭)*
 
 | Method | Path | Permission | Purpose |
 |---|---|---|---|
-| `GET` | `/projects/:projectId/folders/:id` | `document:read` | Folder detail + effective permissions |
 | `PATCH` | `/projects/:projectId/folders/:id` | `folder:manage` | Rename / edit defaults (optimistic lock) |
 | `POST` | `/projects/:projectId/folders/:id/move` | `folder:manage` | Re-parent subtree |
 | `POST` | `/projects/:projectId/folders/:id/copy` | `folder:manage` | Deep-copy |
 | `DELETE` | `/projects/:projectId/folders/:id` | `document:delete` | Soft-delete (cascade) |
 | `POST` | `/projects/:projectId/folders/:id/restore` | `folder:manage` | Restore |
-| `GET` | `/projects/:projectId/folders/:id/permissions` | `folder:manage` | List grants |
-| `PUT` | `/projects/:projectId/folders/:id/permissions` | `folder:manage` | Replace grants |
 
 ### 8.3 Examples
 
@@ -580,13 +581,14 @@ flowchart LR
 |---|---|
 | **Tenant isolation** | Every query filters `tenant_id` from the JWT; never trust body/param tenant. |
 | **Data scope first** | Folder visible only if its project is within the user's `OWN`/`OWN_ORG`/`ALL_ORG` scope. |
-| **Inheritance** | Children inherit parent grants unless they override (⏭). |
-| **Overrides** | Explicit deny beats inherited/role allow at equal-or-lower specificity. |
+| **Private by default** ✅ | A folder with no grants (and no restricting ancestor) is visible only to its creator + admins — never open to everyone. |
+| **Inheritance** ✅ | Children inherit the nearest ancestor's grants until given their own (computed-at-read). |
+| **Level enforcement** ✅ | `view` = see; `edit` = upload/revise/edit metadata; `manage` = change access. Enforced server-side at each endpoint. |
 | **Public folders** ⏭ | A folder may be flagged public-within-project (all members read). |
 | **Public links** ⏭ | Time-boxed, optionally password-protected, token URLs to a folder/file; revocable; audited on access. |
 | **Private files** ⏭ | Uploader-only visibility until shared/published. |
-| **Admin rules** | `*` superuser bypasses folder ACL; still fully audited. |
-| **Creator rules** | Folder/doc creator retains manage rights unless explicitly revoked. |
+| **Admin rules** | `*` superuser (and `document:delete` holders) bypass folder ACL; still fully audited. |
+| **Creator rules** | A folder's creator always retains `manage` on it. |
 | **Permission resolution** | See [§19](#19-folder-permission-resolution-flow). |
 
 ---
@@ -846,25 +848,22 @@ erDiagram
 
 ## 19. Folder Permission Resolution Flow
 
-**Priority (highest → lowest):** User Permission → Role Permission → Inherited (ancestor) → Default (project privilege) → Deny.
+**As-built (private-by-default, level-based):** resolve the **source** = nearest self-or-ancestor folder that has its own grants, then read the user's highest granted level on it. No source ⇒ private (creator/admins only). Required level: `view` to see, `edit` to upload/revise/edit, `manage` to change access.
 
 ```mermaid
 flowchart TD
-  Q[Resolve: user, folder, action] --> U{User grant on this folder?}
-  U -- allow --> ALLOW[ALLOW]
-  U -- deny --> DENY[DENY]
-  U -- none --> R{Role grant on this folder?}
-  R -- allow --> ALLOW
-  R -- deny --> DENY
-  R -- none --> I{Inherited grant from ancestor?}
-  I -- allow --> ALLOW
-  I -- deny --> DENY
-  I -- none --> P{Project privilege allows action?}
-  P -- yes --> ALLOW
-  P -- no --> DENY
+  Q[Resolve: user, folder, required level] --> SA{Superuser, document:delete, or creator?}
+  SA -- yes --> ALLOW[ALLOW: manage]
+  SA -- no --> SRC{Nearest self-or-ancestor with own grants?}
+  SRC -- none --> DENY[DENY: private]
+  SRC -- 'source' --> G{User or one of their project roles granted on source?}
+  G -- no --> DENY
+  G -- yes --> L{Highest granted level >= required?}
+  L -- yes --> ALLOW
+  L -- no --> DENY
 ```
 
-> **Note:** At equal specificity, **deny wins**. Superuser `*` is evaluated before this flow and short-circuits to ALLOW (still audited).
+> **Note:** Data scope (`assertProjectAccess`) is checked first — an out-of-scope project yields 404 before ACLs are consulted. Superuser `*` and `document:delete` holders short-circuit to ALLOW (still audited).
 
 ---
 
@@ -881,14 +880,14 @@ flowchart TD
   D --> G{Name unique under parent?}
   F --> G
   G -- no --> Y[409 Duplicate name]
-  G -- yes --> H[INSERT folder, inherit parent ACL]
+  G -- yes --> H[INSERT folder - no own ACL: inherits ancestor at read time]
   H --> I[Audit folder.created]
   I --> J[Return 201 + refresh tree]
 ```
 
 - **Parent folder:** validated to be in same project and active.
-- **Subfolder:** `path` derived from parent chain; inherits parent grants (⏭).
-- **Inheritance:** child uses ancestor permissions until overridden.
+- **Subfolder:** `path` derived from parent chain; with no own grants it inherits the nearest ancestor's ACL at read time. ✅
+- **Inheritance:** child uses ancestor permissions until given its own; a top-level folder with no grants is private (creator/admins only). ✅
 - **Validation:** name length + uniqueness + parent validity.
 
 ---

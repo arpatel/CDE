@@ -558,20 +558,27 @@ function ManageAccessDialog({ projectId, folder, onClose, onSaved }: {
   const [grants, setGrants] = useState<Record<string, Level>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const loaded = useRef(false);
+  // Stop re-seeding once the user starts editing, so a late SWR revalidation
+  // can't wipe their in-progress changes. Until then, always seed from the
+  // freshest server data (SWR can hand back a stale cached value first).
+  const dirty = useRef(false);
 
   useEffect(() => {
-    if (current && !loaded.current) {
+    if (current && !dirty.current) {
       const next: Record<string, Level> = {};
       for (const g of current.items) next[`${g.principalType}:${g.principalId}`] = g.accessLevel;
       setGrants(next); // effective grants (own, or inherited copy) — seeds the editor when overriding
       // Default top-level folders to custom access; deeper folders inherit by default.
       setMode(current.own ? "custom" : isTopLevel ? "custom" : "inherit");
-      loaded.current = true;
     }
   }, [current, isTopLevel]);
 
+  function pickMode(m: "inherit" | "custom") {
+    dirty.current = true;
+    setMode(m);
+  }
   function toggle(type: "user" | "role", id: string, checked: boolean) {
+    dirty.current = true;
     setGrants((g) => {
       const n = { ...g };
       if (checked) n[`${type}:${id}`] = n[`${type}:${id}`] ?? "view";
@@ -580,6 +587,7 @@ function ManageAccessDialog({ projectId, folder, onClose, onSaved }: {
     });
   }
   function setLevel(type: "user" | "role", id: string, level: Level) {
+    dirty.current = true;
     setGrants((g) => ({ ...g, [`${type}:${id}`]: level }));
   }
 
@@ -634,11 +642,11 @@ function ManageAccessDialog({ projectId, folder, onClose, onSaved }: {
         {/* Inherit vs. independent (override) selector */}
         <div className="field" style={{ marginTop: 4 }}>
           <label className="flex-gap" style={{ cursor: "pointer", marginBottom: 6 }}>
-            <input type="radio" name="acl-mode" checked={mode === "inherit"} onChange={() => setMode("inherit")} />
-            <span>{parentName ? `Inherit access from “${parentName}”` : "Open to everyone (no restriction)"}</span>
+            <input type="radio" name="acl-mode" checked={mode === "inherit"} onChange={() => pickMode("inherit")} />
+            <span>{parentName ? `Inherit access from “${parentName}”` : "No custom access (admins & creator only)"}</span>
           </label>
           <label className="flex-gap" style={{ cursor: "pointer" }}>
-            <input type="radio" name="acl-mode" checked={mode === "custom"} onChange={() => setMode("custom")} />
+            <input type="radio" name="acl-mode" checked={mode === "custom"} onChange={() => pickMode("custom")} />
             <span>{isTopLevel ? "Set custom access (choose who can see it)" : "Set custom access (independent — overrides parent)"}</span>
           </label>
           {isTopLevel && <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>Top-level folder — no parent to inherit from, so set access explicitly.</div>}
@@ -648,7 +656,7 @@ function ManageAccessDialog({ projectId, folder, onClose, onSaved }: {
           {mode === "inherit"
             ? (parentName
                 ? `This folder follows “${parentName}”. Subfolders below it inherit the same — until one is given its own access.`
-                : "Visible to everyone with document access on this project.")
+                : "No access set — only admins and the creator can see this folder. Grant a role or member below to share it.")
             : (count === 0
                 ? "Independent: no one selected yet — add at least one role or member, or it stays inaccessible to non-admins."
                 : `Independent: only the ${count} selected (plus the creator & admins) can see this folder; its subfolders inherit this.`)}
