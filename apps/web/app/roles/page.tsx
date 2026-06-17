@@ -18,11 +18,18 @@ interface Catalogue { groups: { module: string; permissions: string[] }[]; wildc
 
 // Data-visibility levels for a role.
 const SCOPES = [
-  { value: "OWN", label: "Assigned only", hint: "Sees only projects/records they're assigned to" },
-  { value: "OWN_ORG", label: "Own organization", hint: "Sees all data of their own organization" },
-  { value: "ALL_ORG", label: "All organizations", hint: "Sees every organization's data (like super admin)" },
+  { value: "OWN", label: "Assigned only", hint: "Sees only the projects / records they're assigned to" },
+  { value: "OWN_ORG", label: "Own organization", hint: "Sees all data of their own organization (project-level role)" },
+  { value: "ALL_ORG", label: "All organizations", hint: "Sees every organization — support / super-admin only, NOT a project role" },
 ];
 const scopeLabel = (s: string) => SCOPES.find((x) => x.value === s)?.label ?? s;
+
+// Action columns for the permission matrix, in display order.
+const ACTION_COLS = ["read", "create", "update", "member:manage", "manage", "action"];
+const ACTION_LABEL: Record<string, string> = {
+  read: "Read", create: "Create", update: "Update", "member:manage": "Members", manage: "Manage", action: "Action",
+};
+const actionOf = (perm: string) => perm.split(":").slice(1).join(":");
 
 export default function RolesPage() {
   const { data, mutate, isLoading } = useSWR<{ items: Role[] }>("/roles", fetcher);
@@ -109,9 +116,21 @@ function RoleEditor({ role, catalogue, onClose, onSaved }: {
   function toggle(p: string) {
     setSelected((s) => { const n = new Set(s); n.has(p) ? n.delete(p) : n.add(p); return n; });
   }
-  function toggleModule(perms: string[], on: boolean) {
+  function toggleMany(perms: string[], on: boolean) {
     setSelected((s) => { const n = new Set(s); perms.forEach((p) => on ? n.add(p) : n.delete(p)); return n; });
   }
+
+  // Build the matrix: which action columns are actually present, and a quick
+  // lookup of (module, action) → permission string.
+  const columns = (() => {
+    const present = new Set<string>();
+    for (const g of catalogue.groups) for (const p of g.permissions) present.add(actionOf(p));
+    const ordered = ACTION_COLS.filter((a) => present.has(a));
+    const extra = [...present].filter((a) => !ACTION_COLS.includes(a)).sort();
+    return [...ordered, ...extra];
+  })();
+  const permOf = (g: { permissions: string[] }, action: string) => g.permissions.find((p) => actionOf(p) === action);
+  const colPerms = (action: string) => catalogue.groups.map((g) => permOf(g, action)).filter((p): p is string => !!p);
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -129,7 +148,7 @@ function RoleEditor({ role, catalogue, onClose, onSaved }: {
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" style={{ maxWidth: 620 }} onClick={(e) => e.stopPropagation()}>
+      <div className="modal" style={{ maxWidth: 760 }} onClick={(e) => e.stopPropagation()}>
         <h3>{role ? `Edit role — ${role.name}` : "Create Role"}</h3>
         <form onSubmit={submit}>
           <div className="field"><label>Role name *</label><input required value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Document Controller" /></div>
@@ -148,29 +167,46 @@ function RoleEditor({ role, catalogue, onClose, onSaved }: {
           </label>
 
           {!fullAccess && (
-            <div style={{ maxHeight: 320, overflowY: "auto", border: "1px solid #e2e8f0", borderRadius: 8, padding: 12 }}>
-              {catalogue.groups.map((g) => {
-                const allOn = g.permissions.every((p) => selected.has(p));
-                return (
-                  <div key={g.module} style={{ marginBottom: 12 }}>
-                    <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 700, color: "var(--primary)", marginBottom: 4 }}>
-                      <input type="checkbox" checked={allOn} onChange={(e) => toggleModule(g.permissions, e.target.checked)} />
-                      {g.module}
-                    </label>
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(96px, 1fr))", gap: "4px 10px", paddingLeft: 22 }}>
-                      {g.permissions.map((p) => {
-                        const action = p.split(":").slice(1).join(":");
-                        return (
-                          <label key={p} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12, textTransform: "capitalize" }}>
-                            <input type="checkbox" checked={selected.has(p)} onChange={() => toggle(p)} />
-                            {action}
-                          </label>
-                        );
-                      })}
-                    </div>
-                  </div>
-                );
-              })}
+            <div className="perm-matrix-wrap">
+              <table className="perm-matrix">
+                <thead>
+                  <tr>
+                    <th className="pm-mod">Module</th>
+                    {columns.map((c) => {
+                      const perms = colPerms(c);
+                      const on = perms.length > 0 && perms.every((p) => selected.has(p));
+                      return (
+                        <th key={c}>
+                          <div>{ACTION_LABEL[c] ?? c}</div>
+                          <input type="checkbox" title={`Toggle ${ACTION_LABEL[c] ?? c} for all`} checked={on} onChange={(e) => toggleMany(perms, e.target.checked)} />
+                        </th>
+                      );
+                    })}
+                    <th className="pm-all">All</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {catalogue.groups.map((g) => {
+                    const rowOn = g.permissions.every((p) => selected.has(p));
+                    return (
+                      <tr key={g.module}>
+                        <td className="pm-mod">{g.module}</td>
+                        {columns.map((c) => {
+                          const perm = permOf(g, c);
+                          return (
+                            <td key={c} className="pm-cell">
+                              {perm
+                                ? <input type="checkbox" checked={selected.has(perm)} onChange={() => toggle(perm)} />
+                                : <span className="pm-na">–</span>}
+                            </td>
+                          );
+                        })}
+                        <td className="pm-cell"><input type="checkbox" checked={rowOn} onChange={(e) => toggleMany(g.permissions, e.target.checked)} /></td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
           )}
 

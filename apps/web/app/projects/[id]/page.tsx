@@ -5,13 +5,13 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import useSWR from "swr";
 import { Shell } from "@/components/Shell";
-import { PageHeader } from "@/components/Modal";
+import { Modal, PageHeader } from "@/components/Modal";
 import { api, fetcher } from "@/lib/api";
 
 interface ProjectDetail { id: string; name: string; code: string; status: string; ownerOrg: { id: string; name: string } | null }
 interface Member { id: string; userId: string; role: { id: string; name: string } | null; user: { id: string; displayName: string; email: string } }
 interface UserLite { id: string; displayName: string; email: string }
-interface Role { id: string; name: string }
+interface Role { id: string; name: string; dataScope?: string }
 
 function initials(name: string) {
   return name.split(" ").map((s) => s[0]).slice(0, 2).join("").toUpperCase();
@@ -20,34 +20,54 @@ function initials(name: string) {
 export default function ProjectDetailPage() {
   const { id } = useParams<{ id: string }>();
   const [addToRole, setAddToRole] = useState<Role | null>(null);
-  const [busyUser, setBusyUser] = useState<string | null>(null);
+  const [showNewRole, setShowNewRole] = useState(false);
+  const [busyKey, setBusyKey] = useState<string | null>(null);
 
   const { data: project } = useSWR<ProjectDetail>(id ? `/projects/${id}` : null, fetcher);
   const { data: members, mutate } = useSWR<{ items: Member[] }>(id ? `/projects/${id}/members` : null, fetcher);
   const { data: users } = useSWR<{ items: UserLite[] }>("/users", fetcher);
-  const { data: roles } = useSWR<{ items: Role[] }>("/roles", fetcher);
+  const { data: roles, mutate: mutateRoles } = useSWR<{ items: Role[] }>("/roles", fetcher);
 
   const memberItems = members?.items ?? [];
-  const roleList = roles?.items ?? [];
+  // ALL_ORG roles are tenant-wide support / super-admin — not assignable per project.
+  const roleList = (roles?.items ?? []).filter((r) => r.dataScope !== "ALL_ORG");
   const allUsers = users?.items ?? [];
+  const distinctUsers = new Set(memberItems.map((m) => m.userId)).size;
 
-  // Group members by role (+ an "unassigned" bucket).
+  // Group membership rows by role (+ an "unassigned" bucket). A user can appear
+  // under several roles (one membership row per role).
   const byRole = new Map<string, Member[]>();
   const noRole: Member[] = [];
   for (const m of memberItems) {
     if (m.role) { const a = byRole.get(m.role.id) ?? []; a.push(m); byRole.set(m.role.id, a); }
     else noRole.push(m);
   }
-  const roleNameByUser = new Map(memberItems.map((m) => [m.userId, m.role?.name ?? null]));
-
-  async function removeMember(userId: string, name: string) {
-    if (!confirm(`Remove ${name} from this project?`)) return;
-    setBusyUser(userId);
-    try { await api.del(`/projects/${id}/members/${userId}`); await mutate(); }
-    finally { setBusyUser(null); }
+  // userId → list of role names they already hold (for the add picker).
+  const rolesByUser = new Map<string, string[]>();
+  for (const m of memberItems) {
+    if (!m.role) continue;
+    const a = rolesByUser.get(m.userId) ?? [];
+    a.push(m.role.name);
+    rolesByUser.set(m.userId, a);
   }
 
-  function MemberRow({ m }: { m: Member }) {
+  async function removeFromRole(userId: string, roleId: string | null, name: string, roleName: string) {
+    if (!confirm(`Remove ${name} from “${roleName}”?`)) return;
+    const key = `${userId}:${roleId ?? "none"}`;
+    setBusyKey(key);
+    try {
+      await api.del(`/projects/${id}/members/${userId}${roleId ? `?roleId=${roleId}` : ""}`);
+      await mutate();
+    } finally { setBusyKey(null); }
+  }
+
+  async function createRole(v: Record<string, string>) {
+    await api.post("/roles", { name: v.name });
+    await mutateRoles();
+  }
+
+  function MemberRow({ m, roleId, roleName }: { m: Member; roleId: string | null; roleName: string }) {
+    const key = `${m.userId}:${roleId ?? "none"}`;
     return (
       <div className="member-chip">
         <span className="avatar-sm">{initials(m.user.displayName)}</span>
@@ -55,7 +75,7 @@ export default function ProjectDetailPage() {
           <div style={{ fontWeight: 600, fontSize: 13 }}>{m.user.displayName}</div>
           <div className="muted" style={{ fontSize: 11 }}>{m.user.email}</div>
         </div>
-        <button className="action-link" style={{ color: "#dc2626" }} disabled={busyUser === m.userId} onClick={() => removeMember(m.userId, m.user.displayName)}>Remove</button>
+        <button className="action-link" style={{ color: "#dc2626" }} disabled={busyKey === key} onClick={() => removeFromRole(m.userId, roleId, m.user.displayName, roleName)}>Remove</button>
       </div>
     );
   }
@@ -73,7 +93,7 @@ export default function ProjectDetailPage() {
         <div className="role-members">
           {list.length === 0
             ? <div className="muted" style={{ fontSize: 12, padding: "6px 2px" }}>No users in this role yet.</div>
-            : list.map((m) => <MemberRow key={m.id} m={m} />)}
+            : list.map((m) => <MemberRow key={m.id} m={m} roleId={role?.id ?? null} roleName={role?.name ?? "No role"} />)}
         </div>
       </div>
     );
@@ -86,11 +106,12 @@ export default function ProjectDetailPage() {
       </div>
       <PageHeader
         title={project?.name ?? "Project"}
-        subtitle={project ? `${project.code} · ${project.ownerOrg?.name ?? "no org"} · ${project.status} · ${memberItems.length} member(s)` : ""}
+        subtitle={project ? `${project.code} · ${project.ownerOrg?.name ?? "no org"} · ${project.status} · ${distinctUsers} member(s)` : ""}
+        action={<button className="btn btn-outline btn-sm" onClick={() => setShowNewRole(true)}>+ New role</button>}
       />
 
       {roleList.length === 0 ? (
-        <div className="empty">No roles defined yet — create roles under <strong>Admin → Roles</strong> first.</div>
+        <div className="empty">No roles defined yet — click <strong>+ New role</strong> to add one.</div>
       ) : (
         <div className="role-grid">
           {roleList.map((r) => <RoleGroup key={r.id} role={r} list={byRole.get(r.id) ?? []} />)}
@@ -103,26 +124,37 @@ export default function ProjectDetailPage() {
           projectId={id}
           role={addToRole}
           users={allUsers}
-          roleNameByUser={roleNameByUser}
+          rolesByUser={rolesByUser}
           onClose={() => setAddToRole(null)}
           onDone={async () => { setAddToRole(null); await mutate(); }}
+        />
+      )}
+
+      {showNewRole && (
+        <Modal
+          title="New role"
+          submitLabel="Create role"
+          fields={[{ name: "name", label: "Role name", required: true, placeholder: "e.g. Quantity Surveyor" }]}
+          onClose={() => setShowNewRole(false)}
+          onSubmit={createRole}
         />
       )}
     </Shell>
   );
 }
 
-// Add (or move) several users into one role at once.
-function AddUsersToRole({ projectId, role, users, roleNameByUser, onClose, onDone }: {
+// Add several users to a role at once. Additive — a user keeps any other roles.
+function AddUsersToRole({ projectId, role, users, rolesByUser, onClose, onDone }: {
   projectId: string; role: Role; users: UserLite[];
-  roleNameByUser: Map<string, string | null>; onClose: () => void; onDone: () => void;
+  rolesByUser: Map<string, string[]>; onClose: () => void; onDone: () => void;
 }) {
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Users already in THIS role are not re-listed; others can be added or moved.
-  const selectable = users.filter((u) => roleNameByUser.get(u.id) !== role.name);
+  // Hide users already in THIS role; everyone else can be added (keeping their
+  // existing roles — a user may hold multiple roles).
+  const selectable = users.filter((u) => !(rolesByUser.get(u.id) ?? []).includes(role.name));
 
   function toggle(uid: string) {
     setPicked((s) => { const n = new Set(s); n.has(uid) ? n.delete(uid) : n.add(uid); return n; });
@@ -142,18 +174,18 @@ function AddUsersToRole({ projectId, role, users, roleNameByUser, onClose, onDon
       <div className="modal" style={{ maxWidth: 540 }} onClick={(e) => e.stopPropagation()}>
         <h3>Add users to <span style={{ color: "var(--accent)" }}>{role.name}</span></h3>
         <p className="muted" style={{ fontSize: 12, marginTop: -4 }}>
-          Selecting a user already in another role will move them to {role.name}.
+          A user can hold several roles — adding here keeps their existing roles.
         </p>
         <div className="field">
           <label>Users ({picked.size} selected)</label>
           <div style={{ maxHeight: 320, overflowY: "auto", border: "1px solid #e2e8f0", borderRadius: 8, padding: 8 }}>
-            {selectable.length === 0 ? <div className="muted" style={{ fontSize: 12 }}>No other users available.</div> : selectable.map((u) => {
-              const cur = roleNameByUser.get(u.id);
+            {selectable.length === 0 ? <div className="muted" style={{ fontSize: 12 }}>Everyone is already in this role.</div> : selectable.map((u) => {
+              const cur = rolesByUser.get(u.id) ?? [];
               return (
                 <label key={u.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 4px", fontSize: 13 }}>
                   <input type="checkbox" checked={picked.has(u.id)} onChange={() => toggle(u.id)} />
                   <span style={{ flex: 1 }}>{u.displayName} <span className="muted">({u.email})</span></span>
-                  {cur && <span className="status-pill status-open" style={{ fontSize: 10 }}>in {cur}</span>}
+                  {cur.map((rn) => <span key={rn} className="status-pill status-open" style={{ fontSize: 10 }}>{rn}</span>)}
                 </label>
               );
             })}

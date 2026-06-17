@@ -114,6 +114,20 @@ tr:hover td{background:#f8fafc}
 .member-chip{display:flex;align-items:center;gap:10px;padding:7px 6px;border-radius:8px}
 .member-chip:hover{background:#f8fafc}
 
+/* PERMISSION MATRIX (role editor) */
+.perm-matrix-wrap{max-height:380px;overflow:auto;border:1px solid #e2e8f0;border-radius:8px}
+.perm-matrix{width:100%;border-collapse:separate;border-spacing:0;font-size:12px}
+.perm-matrix th,.perm-matrix td{padding:6px 8px;text-align:center;border-bottom:1px solid #f1f5f9}
+.perm-matrix thead th{position:sticky;top:0;background:#f8fafc;z-index:2;font-weight:700;color:#475569;white-space:nowrap}
+.perm-matrix thead th input{display:block;margin:3px auto 0}
+.perm-matrix .pm-mod{text-align:left;font-weight:600;color:#1e293b;position:sticky;left:0;background:#fff;z-index:1;white-space:nowrap}
+.perm-matrix thead .pm-mod{background:#f8fafc;z-index:3}
+.perm-matrix tbody tr:hover td{background:#f8fafc}
+.perm-matrix tbody tr:hover .pm-mod{background:#f1f5f9}
+.perm-matrix input[type=checkbox]{width:16px;height:16px;cursor:pointer}
+.perm-matrix .pm-na{color:#cbd5e1}
+.perm-matrix .pm-all{color:#64748b}
+
 /* TABS */
 .tabs{display:flex;gap:4px;margin-bottom:14px;border-bottom:1px solid #e2e8f0}
 .tab{background:none;border:none;padding:9px 16px;font-size:13px;font-weight:600;color:#64748b;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px}

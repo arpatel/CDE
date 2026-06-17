@@ -326,19 +326,20 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
     async (req, reply) => {
       const { tenantId, userId } = ctx(req);
       const { id, memberUserId } = req.params as { id: string; memberUserId: string };
+      // ?roleId=… removes only that role pairing; omitted removes the user entirely.
+      const roleId = (req.query as { roleId?: string }).roleId;
       await assertProject(tenantId, id);
-      const existing = await prisma.projectMember.findFirst({
-        where: { projectId: id, userId: memberUserId },
+      const result = await prisma.projectMember.deleteMany({
+        where: { projectId: id, userId: memberUserId, ...(roleId ? { roleId } : {}) },
       });
-      if (!existing) throw ApiError.notFound("Member not found");
-      await prisma.projectMember.delete({ where: { id: existing.id } });
+      if (result.count === 0) throw ApiError.notFound("Member not found");
       await audit({
         tenantId,
         userId,
         action: "project.member.removed",
         resourceType: "project",
         resourceId: id,
-        changes: { userId: memberUserId },
+        changes: { userId: memberUserId, roleId: roleId ?? null },
         ip: req.ip,
       });
       return reply.code(204).send();

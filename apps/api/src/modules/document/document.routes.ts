@@ -84,11 +84,11 @@ async function userRoleIds(tenantId: string, projectId: string, userId: string):
     select: { roleId: true },
   });
   for (const r of orgRoles) ids.add(r.roleId);
-  const pm = await prisma.projectMember.findFirst({
+  const pms = await prisma.projectMember.findMany({
     where: { projectId, userId },
     select: { roleId: true },
   });
-  if (pm?.roleId) ids.add(pm.roleId);
+  for (const pm of pms) if (pm.roleId) ids.add(pm.roleId);
   return [...ids];
 }
 

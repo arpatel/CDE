@@ -144,6 +144,7 @@ export default function ProjectsPage() {
       {menu && (
         <div className="ctx-menu" style={{ top: menu.y, left: Math.max(8, menu.x) }} onClick={(e) => e.stopPropagation()}>
           <button className="ctx-item" onClick={() => { router.push(`/projects/${menu.project.id}`); setMenu(null); }}>👥 Members &amp; roles</button>
+          <button className="ctx-item" onClick={() => { router.push(`/roles`); setMenu(null); }}>🔑 Roles</button>
           <button className="ctx-item" onClick={() => { setEditing(menu.project); setMenu(null); }}>✏️ Edit project</button>
         </div>
       )}
