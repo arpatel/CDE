@@ -397,11 +397,11 @@ function EditAttributesDialog({ projectId, doc, onClose, onSaved }: {
 }
 
 // ── Online file viewer ───────────────────────────────────────────────────────
-type ViewKind = "pdf" | "image" | "video" | "audio" | "text" | "unsupported";
+type ViewKind = "pdf" | "image" | "video" | "audio" | "text" | "sheet" | "docx" | "unsupported";
 type ViewState =
   | { phase: "loading" }
   | { phase: "error"; message: string }
-  | { phase: "ready"; kind: ViewKind; url: string; type: string; name: string; text?: string };
+  | { phase: "ready"; kind: ViewKind; url: string; type: string; name: string; text?: string; html?: string; blob?: Blob };
 
 function classifyKind(type: string, name: string): ViewKind {
   const t = (type || "").toLowerCase();
@@ -411,6 +411,8 @@ function classifyKind(type: string, name: string): ViewKind {
   if (t.startsWith("image/") || ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "ico"].includes(ext)) return "image";
   if (t.startsWith("video/") || ["mp4", "webm", "ogg", "mov"].includes(ext)) return "video";
   if (t.startsWith("audio/") || ["mp3", "wav", "oga", "m4a"].includes(ext)) return "audio";
+  if (["xlsx", "xls", "xlsm", "ods"].includes(ext) || t.includes("spreadsheet") || t.includes("ms-excel")) return "sheet";
+  if (ext === "docx" || t.includes("wordprocessingml")) return "docx";
   if (
     t.startsWith("text/") ||
     ["application/json", "application/xml", "application/javascript"].includes(t) ||
@@ -423,6 +425,7 @@ function classifyKind(type: string, name: string): ViewKind {
 function FileViewer({ projectId, doc, onClose }: { projectId: string; doc: Doc; onClose: () => void }) {
   const [state, setState] = useState<ViewState>({ phase: "loading" });
   const urlRef = useRef<string | null>(null);
+  const docxRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -435,9 +438,20 @@ function FileViewer({ projectId, doc, onClose }: { projectId: string; doc: Doc; 
         const { url, blob, type } = await api.openInline(`/projects/${projectId}/documents/${doc.id}/revisions/${latest.id}/download`);
         urlRef.current = url;
         const kind = classifyKind(type, name);
-        const text = kind === "text" ? await blob.text() : undefined;
+        let text: string | undefined;
+        let html: string | undefined;
+        if (kind === "text") {
+          text = await blob.text();
+        } else if (kind === "sheet") {
+          // Render every worksheet to an HTML table (client-side, offline).
+          const XLSX = await import("xlsx");
+          const wb = XLSX.read(await blob.arrayBuffer(), { type: "array" });
+          html = wb.SheetNames.map(
+            (sn) => `<div class="sheet-tab">${sn}</div>${XLSX.utils.sheet_to_html(wb.Sheets[sn])}`,
+          ).join("");
+        }
         if (cancelled) { URL.revokeObjectURL(url); return; }
-        setState({ phase: "ready", kind, url, type, name, text });
+        setState({ phase: "ready", kind, url, type, name, text, html, blob });
       } catch (err) {
         if (!cancelled) setState({ phase: "error", message: err instanceof ApiError ? err.message : "Could not load file." });
       }
@@ -447,6 +461,23 @@ function FileViewer({ projectId, doc, onClose }: { projectId: string; doc: Doc; 
       if (urlRef.current) { URL.revokeObjectURL(urlRef.current); urlRef.current = null; }
     };
   }, [projectId, doc.id, doc.title]);
+
+  // DOCX renders asynchronously into a container element.
+  useEffect(() => {
+    if (state.phase !== "ready" || state.kind !== "docx" || !state.blob || !docxRef.current) return;
+    let cancelled = false;
+    const target = docxRef.current;
+    (async () => {
+      try {
+        const { renderAsync } = await import("docx-preview");
+        target.innerHTML = "";
+        if (!cancelled) await renderAsync(state.blob!, target, undefined, { inWrapper: true, className: "docx" });
+      } catch {
+        if (!cancelled) target.innerHTML = '<div class="empty">Could not render this Word document — try Download.</div>';
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [state]);
 
   async function download() {
     const revs = await api.get<{ items: Rev[] }>(`/projects/${projectId}/documents/${doc.id}/revisions`);
@@ -482,10 +513,15 @@ function FileViewer({ projectId, doc, onClose }: { projectId: string; doc: Doc; 
               <div className="viewer-center"><audio src={state.url} controls /></div>
             ) : state.kind === "text" ? (
               <pre className="viewer-text">{state.text}</pre>
+            ) : state.kind === "sheet" ? (
+              <div className="viewer-sheet" dangerouslySetInnerHTML={{ __html: state.html ?? "" }} />
+            ) : state.kind === "docx" ? (
+              <div className="viewer-docx"><div ref={docxRef} /></div>
             ) : (
               <div className="empty" style={{ textAlign: "center" }}>
                 <div style={{ fontSize: 40 }}>📄</div>
-                <p>No inline preview for this file type ({state.type || "unknown"}).</p>
+                <p>No inline preview yet for this file type ({state.type || "unknown"}).</p>
+                <p className="muted" style={{ fontSize: 12 }}>DWG / PPTX preview needs the conversion service (coming next) — for now, download to open.</p>
                 <button className="btn btn-primary btn-sm" onClick={download}>⬇️ Download to open</button>
               </div>
             )
