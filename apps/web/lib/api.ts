@@ -42,9 +42,11 @@ async function toError(res: Response): Promise<ApiError> {
 async function request<T>(path: string, opts: RequestInit = {}, allowRetry = true): Promise<T> {
   const tokens = getTokens();
   const headers: Record<string, string> = {
-    "content-type": "application/json",
     ...(opts.headers as Record<string, string>),
   };
+  // Only declare a JSON content-type when there's actually a body — sending it
+  // on a body-less request (e.g. DELETE) makes Fastify's JSON parser 400.
+  if (opts.body !== undefined && opts.body !== null) headers["content-type"] = "application/json";
   if (tokens?.accessToken) headers.Authorization = `Bearer ${tokens.accessToken}`;
 
   const res = await fetch(`${BASE}${path}`, { ...opts, headers });
