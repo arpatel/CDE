@@ -94,6 +94,7 @@ export default function RolesPage() {
         <RoleEditor
           role={editor.role}
           catalogue={cat}
+          isSuper={isSuper}
           onClose={() => setEditor(null)}
           onSaved={async () => { setEditor(null); await mutate(); }}
         />
@@ -102,9 +103,10 @@ export default function RolesPage() {
   );
 }
 
-function RoleEditor({ role, catalogue, onClose, onSaved }: {
+function RoleEditor({ role, catalogue, isSuper, onClose, onSaved }: {
   role: Role | null;
   catalogue: Catalogue;
+  isSuper: boolean;
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -138,11 +140,14 @@ function RoleEditor({ role, catalogue, onClose, onSaved }: {
   async function submit(e: FormEvent) {
     e.preventDefault();
     setBusy(true); setError(null);
-    const permissions = fullAccess ? ["*"] : [...selected];
-    const scope = fullAccess ? "ALL_ORG" : dataScope;
+    // Data-access level and full access (*) are super-admin-only; non-super
+    // payloads omit them and the server pins the role to own-organisation scope.
+    const permissions = isSuper && fullAccess ? ["*"] : [...selected];
+    const payload: Record<string, unknown> = { name, description, permissions };
+    if (isSuper) payload.dataScope = fullAccess ? "ALL_ORG" : dataScope;
     try {
-      if (role) await api.patch(`/roles/${role.id}`, { name, description, permissions, dataScope: scope });
-      else await api.post("/roles", { name, description, permissions, dataScope: scope });
+      if (role) await api.patch(`/roles/${role.id}`, payload);
+      else await api.post("/roles", payload);
       onSaved();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Save failed");
@@ -157,17 +162,28 @@ function RoleEditor({ role, catalogue, onClose, onSaved }: {
           <div className="field"><label>Role name *</label><input required value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Document Controller" /></div>
           <div className="field"><label>Description</label><input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What this role can do" /></div>
 
-          <div className="field">
-            <label>Data access level</label>
-            <select value={fullAccess ? "ALL_ORG" : dataScope} disabled={fullAccess} onChange={(e) => setDataScope(e.target.value)}>
-              {SCOPES.map((s) => <option key={s.value} value={s.value}>{s.label} — {s.hint}</option>)}
-            </select>
-          </div>
+          {isSuper ? (
+            <>
+              <div className="field">
+                <label>Data access level <span className="muted" style={{ fontWeight: 400 }}>(super-admin only)</span></label>
+                <select value={fullAccess ? "ALL_ORG" : dataScope} disabled={fullAccess} onChange={(e) => setDataScope(e.target.value)}>
+                  {SCOPES.map((s) => <option key={s.value} value={s.value}>{s.label} — {s.hint}</option>)}
+                </select>
+              </div>
 
-          <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 600, margin: "8px 0 12px" }}>
-            <input type="checkbox" checked={fullAccess} onChange={(e) => setFullAccess(e.target.checked)} />
-            Full access (super admin · <code>*</code>) — forces “All organizations”
-          </label>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 600, margin: "8px 0 12px" }}>
+                <input type="checkbox" checked={fullAccess} onChange={(e) => setFullAccess(e.target.checked)} />
+                Full access (super admin · <code>*</code>) — forces “All organizations”
+              </label>
+            </>
+          ) : (
+            <div className="field">
+              <label>Data access level</label>
+              <div className="muted" style={{ fontSize: 12 }}>
+                🔒 Fixed to <strong>Own organization</strong>. Only a super admin can change a role's data-access level.
+              </div>
+            </div>
+          )}
 
           {!fullAccess && (
             <div className="perm-matrix-wrap">
