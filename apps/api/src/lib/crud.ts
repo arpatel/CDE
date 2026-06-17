@@ -5,6 +5,7 @@ import { parse } from "./validation.js";
 import { ApiError } from "./errors.js";
 import { audit } from "./audit.js";
 import { ctx, requirePermission } from "../middleware/authenticate.js";
+import { assertProjectAccess } from "./access.js";
 
 // Generic project-scoped resource module. Generates the standard
 // list/create/get/patch/delete surface with tenant isolation, optional
@@ -45,13 +46,6 @@ export function registerCrud(app: FastifyInstance, cfg: CrudConfig): void {
   const softDelete = cfg.softDelete ?? true;
   const model = () => delegateOf(cfg.delegate);
 
-  async function assertProject(tenantId: string, projectId: string) {
-    const p = await prisma.project.findFirst({
-      where: { id: projectId, tenantId, isDeleted: false },
-    });
-    if (!p) throw ApiError.notFound("Project not found");
-  }
-
   function scope(tenantId: string, projectId: string) {
     return softDelete
       ? { tenantId, projectId, isDeleted: false }
@@ -62,6 +56,7 @@ export function registerCrud(app: FastifyInstance, cfg: CrudConfig): void {
   app.get(base, { preHandler: requirePermission(`${cfg.permission}:read`) }, async (req) => {
     const { tenantId } = ctx(req);
     const { projectId } = req.params as { projectId: string };
+    await assertProjectAccess(ctx(req), projectId);
     const query = (req.query ?? {}) as Record<string, any>;
     const where: Record<string, unknown> = scope(tenantId, projectId);
     const filter = query.filter ?? {};
@@ -81,7 +76,7 @@ export function registerCrud(app: FastifyInstance, cfg: CrudConfig): void {
   app.post(base, { preHandler: requirePermission(`${cfg.permission}:create`) }, async (req, reply) => {
     const { tenantId, userId } = ctx(req);
     const { projectId } = req.params as { projectId: string };
-    await assertProject(tenantId, projectId);
+    await assertProjectAccess(ctx(req), projectId);
     const body = parse(cfg.createSchema, req.body) as Record<string, unknown>;
 
     const data: Record<string, unknown> = { ...body, tenantId, projectId };
@@ -115,6 +110,7 @@ export function registerCrud(app: FastifyInstance, cfg: CrudConfig): void {
   app.get(`${base}/:id`, { preHandler: requirePermission(`${cfg.permission}:read`) }, async (req) => {
     const { tenantId } = ctx(req);
     const { projectId, id } = req.params as { projectId: string; id: string };
+    await assertProjectAccess(ctx(req), projectId);
     const item = await model().findFirst({
       where: { id, ...scope(tenantId, projectId) },
       ...(cfg.include ? { include: cfg.include } : {}),
@@ -127,6 +123,7 @@ export function registerCrud(app: FastifyInstance, cfg: CrudConfig): void {
   app.patch(`${base}/:id`, { preHandler: requirePermission(`${cfg.permission}:update`) }, async (req) => {
     const { tenantId, userId } = ctx(req);
     const { projectId, id } = req.params as { projectId: string; id: string };
+    await assertProjectAccess(ctx(req), projectId);
     const existing = await model().findFirst({ where: { id, ...scope(tenantId, projectId) } });
     if (!existing) throw ApiError.notFound();
     const body = parse(cfg.updateSchema, req.body) as Record<string, unknown>;
@@ -149,6 +146,7 @@ export function registerCrud(app: FastifyInstance, cfg: CrudConfig): void {
   app.delete(`${base}/:id`, { preHandler: requirePermission(`${cfg.permission}:update`) }, async (req, reply) => {
     const { tenantId, userId } = ctx(req);
     const { projectId, id } = req.params as { projectId: string; id: string };
+    await assertProjectAccess(ctx(req), projectId);
     const existing = await model().findFirst({ where: { id, ...scope(tenantId, projectId) } });
     if (!existing) throw ApiError.notFound();
     if (softDelete) {

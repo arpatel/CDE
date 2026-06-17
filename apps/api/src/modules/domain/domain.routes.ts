@@ -26,9 +26,8 @@ export async function domainRoutes(app: FastifyInstance): Promise<void> {
   registerMeAndNotifications(app);
 }
 
-async function assertProject(tenantId: string, projectId: string) {
-  const p = await prisma.project.findFirst({ where: { id: projectId, tenantId, isDeleted: false } });
-  if (!p) throw ApiError.notFound("Project not found");
+async function assertProject(auth: AuthContext, projectId: string) {
+  await assertProjectAccess(auth, projectId);
 }
 
 // ─── RFI lifecycle (§2.4) ────────────────────────────────────────────────────
@@ -95,7 +94,7 @@ function registerDocumentLifecycle(app: FastifyInstance) {
     async (req) => {
       const { tenantId } = ctx(req);
       const { projectId } = req.params as { projectId: string };
-      await assertProject(tenantId, projectId);
+      await assertProject(ctx(req), projectId);
       const body = parse(UploadUrlSchema, req.body);
       const fileKey = `${tenantId}/${projectId}/${randomUUID()}/${body.filename}`;
       return {
@@ -282,7 +281,7 @@ function registerWorkflow(app: FastifyInstance) {
     async (req, reply) => {
       const { tenantId, userId } = ctx(req);
       const { projectId } = req.params as { projectId: string };
-      await assertProject(tenantId, projectId);
+      await assertProject(ctx(req), projectId);
       const body = parse(StartSchema, req.body);
       const ordered = [...body.steps].sort((a, b) => a.stepNumber - b.stepNumber);
 
