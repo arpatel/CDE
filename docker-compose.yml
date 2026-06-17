@@ -33,6 +33,30 @@ services:
       timeout: 5s
       retries: 10
 
+  # OnlyOffice Document Server — in-browser Office editor (docx/xlsx/pptx).
+  # The API signs the editor config + verifies save-back callbacks with
+  # ONLYOFFICE_JWT_SECRET. The container reaches the host API via
+  # host.docker.internal (see API_INTERNAL_URL in .env).
+  onlyoffice:
+    image: onlyoffice/documentserver:8.1
+    container_name: cde-onlyoffice
+    restart: unless-stopped
+    ports:
+      - "8082:80"
+    environment:
+      - JWT_ENABLED=true
+      - JWT_SECRET=${ONLYOFFICE_JWT_SECRET}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - cde_onlyoffice:/var/www/onlyoffice/Data
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost/healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
 volumes:
   cde_pgdata:
   cde_redisdata:
+  cde_onlyoffice:
