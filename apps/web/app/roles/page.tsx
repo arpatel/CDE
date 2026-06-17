@@ -33,6 +33,8 @@ const ACTION_LABEL: Record<string, string> = {
 const actionOf = (perm: string) => perm.split(":").slice(1).join(":");
 
 export default function RolesPage() {
+  const { me } = useApp();
+  const isSuper = me?.permissions.includes("*") ?? false;
   const { data, mutate, isLoading } = useSWR<{ items: Role[] }>("/roles", fetcher);
   const { data: cat } = useSWR<Catalogue>("/roles/permissions", fetcher);
   const [editor, setEditor] = useState<{ role: Role | null } | null>(null);
