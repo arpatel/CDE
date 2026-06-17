@@ -151,6 +151,16 @@ tr:hover td{background:#f8fafc}
 .field label{display:block;font-size:12px;font-weight:600;color:#475569;margin-bottom:5px}
 .field input,.field select,.field textarea{width:100%;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:9px 12px;font-size:13px;outline:none}
 .field input:focus,.field select:focus,.field textarea:focus{border-color:var(--accent)}
+/* checkboxes / radios must not stretch to full width */
+.field input[type=checkbox],.field input[type=radio]{width:auto;flex:0 0 auto;padding:0;margin:0}
+
+/* configurable-attribute group inside upload / edit dialogs */
+.attr-box{border:1px solid #e2e8f0;border-radius:10px;padding:12px 14px;margin:4px 0 14px;background:#f8fafc}
+.attr-box-head{font-size:11px;font-weight:700;letter-spacing:.04em;color:#64748b;margin-bottom:10px}
+.attr-box .field{margin-bottom:12px}
+.attr-box .field:last-child{margin-bottom:0}
+.attr-box .field input,.attr-box .field select,.attr-box .field textarea{background:#fff}
+.attr-box .field .flex-gap{min-height:24px}
 .modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:20px}
 .error-text{color:var(--red);font-size:12px;margin-top:8px}
 

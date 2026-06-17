@@ -11,11 +11,17 @@ interface Doc {
   id: string; docNumber: string | null; title: string; status: string;
   currentRevisionId: string | null; folderId?: string | null;
   revisionLabel?: string | null; uploadedAt?: string; uploadedBy?: string;
+  attributes?: Record<string, unknown>;
+}
+interface ApplicableAttr {
+  id: string; name: string; controlType: string; mandatory: boolean;
+  options: string[]; defaultValue: string | null; setName: string | null;
 }
 interface Folder {
   id: string; name: string; parentId: string | null;
   docNumberPrefix?: string | null; defaultStatus?: string | null; defaultPurpose?: string | null;
   restricted?: boolean; canManage?: boolean; grantCount?: number;
+  inherited?: boolean; inheritedFromId?: string | null;
 }
 interface Rev { id: string; revisionLabel: string; originalName: string | null; status: string; purposeOfIssue: string | null; fileSize: number }
 
@@ -112,7 +118,11 @@ export default function DocumentsPage() {
           </span>
           <span className="tree-icon">📁</span>
           <span className="tree-name">{f.name}</span>
-          {f.restricted && <span title={`Restricted (${f.grantCount} grant(s))`} style={{ marginLeft: 6 }}>🔒</span>}
+          {f.restricted && (
+            f.inherited
+              ? <span title="Inherits access from a parent folder" style={{ marginLeft: 6, opacity: 0.55 }}>🔒</span>
+              : <span title={`Custom access (${f.grantCount} grant(s)) — overrides parent`} style={{ marginLeft: 6 }}>🔒</span>
+          )}
         </div>
       );
       return isOpen ? [row, ...renderTree(f.id, depth + 1)] : [row];
@@ -302,11 +312,13 @@ function EditAttributesDialog({ projectId, doc, onClose, onSaved }: {
   const [status, setStatus] = useState(doc.status);
   const [purpose, setPurpose] = useState("");
   const [notes, setNotes] = useState("");
+  const [attrs, setAttrs] = useState<ApplicableAttr[]>([]);
+  const [attrValues, setAttrValues] = useState<Record<string, unknown>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const loaded = useRef(false);
 
-  // Pull current-revision attributes (purpose / notes) to pre-fill.
+  // Pull current-revision attributes (purpose) + configurable attributes to pre-fill.
   useEffect(() => {
     (async () => {
       try {
@@ -317,14 +329,25 @@ function EditAttributesDialog({ projectId, doc, onClose, onSaved }: {
           loaded.current = true;
         }
       } catch { /* ignore */ }
+      try {
+        const q = doc.folderId ? `?folderId=${doc.folderId}` : "";
+        const res = await api.get<{ items: ApplicableAttr[] }>(`/projects/${projectId}/applicable-attributes${q}`);
+        setAttrs(res.items);
+        setAttrValues(seedAttrValues(res.items, doc.attributes));
+      } catch { setAttrs([]); }
     })();
-  }, [projectId, doc.id]);
+  }, [projectId, doc.id, doc.folderId]);
 
   async function save() {
+    if (attrs.some((a) => a.mandatory && isEmptyAttr(attrValues[a.id]))) {
+      setError(`Please fill required attribute(s): ${attrs.filter((a) => a.mandatory && isEmptyAttr(attrValues[a.id])).map((a) => a.name).join(", ")}`);
+      return;
+    }
     setBusy(true); setError(null);
-    const payload: Record<string, string> = { title, status, docNumber: docRef };
+    const payload: Record<string, unknown> = { title, status, docNumber: docRef };
     if (purpose) payload.purposeOfIssue = purpose;
     if (notes) payload.revisionNotes = notes;
+    if (attrs.length) payload.attributes = attrValues;
     try {
       await api.patch(`/projects/${projectId}/documents/${doc.id}/attributes`, payload);
       onSaved();
@@ -353,6 +376,7 @@ function EditAttributesDialog({ projectId, doc, onClose, onSaved }: {
           </select>
         </div>
         <div className="field"><label>Revision Notes (optional)</label><textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Add a note to the current revision" /></div>
+        <AttributeFields attrs={attrs} values={attrValues} onChange={(id, v) => setAttrValues((p) => ({ ...p, [id]: v }))} />
         {error && <div className="error-text">{error}</div>}
         <div className="modal-actions">
           <button className="btn btn-outline" onClick={onClose}>Cancel</button>
@@ -467,14 +491,21 @@ function FileViewer({ projectId, doc, onClose }: { projectId: string; doc: Doc; 
 type Level = "view" | "edit" | "manage";
 interface Principal { id: string; displayName?: string; email?: string; name?: string }
 
+interface PermsResponse {
+  items: { principalType: string; principalId: string; accessLevel: Level }[];
+  own: boolean;
+  inherited: boolean;
+  inheritedFrom: { id: string; name: string } | null;
+  restricted: boolean;
+}
+
 function ManageAccessDialog({ projectId, folder, onClose, onSaved }: {
   projectId: string; folder: Folder; onClose: () => void; onSaved: () => void;
 }) {
   const { data: princ } = useSWR<{ users: Principal[]; roles: Principal[] }>(`/projects/${projectId}/folder-principals`, fetcher);
-  const { data: current } = useSWR<{ items: { principalType: string; principalId: string; accessLevel: Level }[] }>(
-    `/projects/${projectId}/folders/${folder.id}/permissions`,
-    fetcher,
-  );
+  const { data: current } = useSWR<PermsResponse>(`/projects/${projectId}/folders/${folder.id}/permissions`, fetcher);
+  // "inherit" = follow parent (no own ACL); "custom" = independent own ACL.
+  const [mode, setMode] = useState<"inherit" | "custom">("inherit");
   // key = `user:<id>` | `role:<id>` → access level (absence = no access)
   const [grants, setGrants] = useState<Record<string, Level>>({});
   const [busy, setBusy] = useState(false);
@@ -485,7 +516,8 @@ function ManageAccessDialog({ projectId, folder, onClose, onSaved }: {
     if (current && !loaded.current) {
       const next: Record<string, Level> = {};
       for (const g of current.items) next[`${g.principalType}:${g.principalId}`] = g.accessLevel;
-      setGrants(next);
+      setGrants(next); // effective grants (own, or inherited copy) — seeds the editor when overriding
+      setMode(current.own ? "custom" : "inherit");
       loaded.current = true;
     }
   }, [current]);
@@ -504,8 +536,9 @@ function ManageAccessDialog({ projectId, folder, onClose, onSaved }: {
 
   async function save() {
     setBusy(true); setError(null);
+    // inherit mode → send empty (removes own ACL → reverts to parent / open)
     const payload = {
-      grants: Object.entries(grants).map(([k, accessLevel]) => {
+      grants: mode === "inherit" ? [] : Object.entries(grants).map(([k, accessLevel]) => {
         const [principalType, principalId] = k.split(":");
         return { principalType, principalId, accessLevel };
       }),
@@ -519,20 +552,22 @@ function ManageAccessDialog({ projectId, folder, onClose, onSaved }: {
   }
 
   const count = Object.keys(grants).length;
+  const parentName = current?.inheritedFrom?.name;
+  const editable = mode === "custom";
 
   function row(type: "user" | "role", p: Principal) {
     const k = `${type}:${p.id}`;
     const on = grants[k] !== undefined;
     const label = type === "user" ? (p.displayName ?? p.email ?? "User") : (p.name ?? "Role");
     return (
-      <div key={k} className="flex-gap" style={{ justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid #f1f5f9" }}>
-        <label className="flex-gap" style={{ cursor: "pointer" }}>
-          <input type="checkbox" checked={on} onChange={(e) => toggle(type, p.id, e.target.checked)} />
+      <div key={k} className="flex-gap" style={{ justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid #f1f5f9", opacity: editable ? 1 : 0.6 }}>
+        <label className="flex-gap" style={{ cursor: editable ? "pointer" : "default" }}>
+          <input type="checkbox" checked={on} disabled={!editable} onChange={(e) => toggle(type, p.id, e.target.checked)} />
           <span>{type === "user" ? "👤" : "🏷️"} {label}</span>
           {type === "user" && p.email && <span className="muted" style={{ fontSize: 11 }}>{p.email}</span>}
         </label>
         {on && (
-          <select value={grants[k]} onChange={(e) => setLevel(type, p.id, e.target.value as Level)} style={{ width: 130 }}>
+          <select value={grants[k]} disabled={!editable} onChange={(e) => setLevel(type, p.id, e.target.value as Level)} style={{ width: 130 }}>
             <option value="view">Can view</option>
             <option value="edit">Can upload</option>
             <option value="manage">Can manage</option>
@@ -546,13 +581,30 @@ function ManageAccessDialog({ projectId, folder, onClose, onSaved }: {
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal" style={{ maxWidth: 560 }} onClick={(e) => e.stopPropagation()}>
         <h3>Manage access — {folder.name}</h3>
-        <p className="muted" style={{ fontSize: 12, marginTop: -4 }}>
-          {count === 0
-            ? "Open folder: visible to everyone with document access on this project."
-            : `Restricted: only the ${count} selected user(s)/role(s) (plus the creator and admins) can see this folder.`}
+
+        {/* Inherit vs. independent (override) selector */}
+        <div className="field" style={{ marginTop: 4 }}>
+          <label className="flex-gap" style={{ cursor: "pointer", marginBottom: 6 }}>
+            <input type="radio" name="acl-mode" checked={mode === "inherit"} onChange={() => setMode("inherit")} />
+            <span>{parentName ? `Inherit access from “${parentName}”` : "Open / inherit (no restriction)"}</span>
+          </label>
+          <label className="flex-gap" style={{ cursor: "pointer" }}>
+            <input type="radio" name="acl-mode" checked={mode === "custom"} onChange={() => setMode("custom")} />
+            <span>Set custom access (independent — overrides parent)</span>
+          </label>
+        </div>
+
+        <p className="muted" style={{ fontSize: 12, marginTop: 0 }}>
+          {mode === "inherit"
+            ? (parentName
+                ? `This folder follows “${parentName}”. Subfolders below it inherit the same — until one is given its own access.`
+                : "Visible to everyone with document access on this project.")
+            : (count === 0
+                ? "Independent: no one selected yet — add at least one role or member, or it stays inaccessible to non-admins."
+                : `Independent: only the ${count} selected (plus the creator & admins) can see this folder; its subfolders inherit this.`)}
         </p>
 
-        <div style={{ maxHeight: 360, overflowY: "auto", marginTop: 8 }}>
+        <div style={{ maxHeight: 320, overflowY: "auto", marginTop: 4 }}>
           <div className="muted" style={{ fontSize: 12, fontWeight: 600, margin: "8px 0 2px" }}>ROLES</div>
           {(princ?.roles ?? []).length === 0 ? <div className="muted" style={{ fontSize: 12 }}>No roles.</div> : (princ?.roles ?? []).map((r) => row("role", r))}
 
@@ -570,10 +622,94 @@ function ManageAccessDialog({ projectId, folder, onClose, onSaved }: {
   );
 }
 
+// ── Dynamic configurable-attribute fields ────────────────────────────────────
+function seedAttrValues(attrs: ApplicableAttr[], existing?: Record<string, unknown>): Record<string, unknown> {
+  const v: Record<string, unknown> = {};
+  for (const a of attrs) {
+    if (existing && a.id in existing) { v[a.id] = existing[a.id]; continue; }
+    if (a.controlType === "multiselect") v[a.id] = [];
+    else if (a.controlType === "checkbox") v[a.id] = false;
+    else v[a.id] = a.defaultValue ?? "";
+  }
+  return v;
+}
+
+function AttributeFields({ attrs, values, onChange }: {
+  attrs: ApplicableAttr[]; values: Record<string, unknown>; onChange: (id: string, value: unknown) => void;
+}) {
+  if (attrs.length === 0) return null;
+  return (
+    <div className="attr-box">
+      <div className="attr-box-head">📋 ATTRIBUTES</div>
+      {attrs.map((a) => {
+        const val = values[a.id];
+        const label = <label>{a.name}{a.mandatory && <span style={{ color: "#dc2626" }}> *</span>}{a.setName && <span className="muted" style={{ fontSize: 11 }}> · {a.setName}</span>}</label>;
+        if (a.controlType === "dropdown") {
+          return (
+            <div className="field" key={a.id}>{label}
+              <select value={String(val ?? "")} onChange={(e) => onChange(a.id, e.target.value)}>
+                <option value="">— select —</option>
+                {a.options.map((o) => <option key={o} value={o}>{o}</option>)}
+              </select>
+            </div>
+          );
+        }
+        if (a.controlType === "radio") {
+          return (
+            <div className="field" key={a.id}>{label}
+              <div className="flex-gap" style={{ flexWrap: "wrap", gap: 12 }}>
+                {a.options.map((o) => (
+                  <label key={o} className="flex-gap" style={{ cursor: "pointer" }}>
+                    <input type="radio" name={a.id} checked={val === o} onChange={() => onChange(a.id, o)} /> {o}
+                  </label>
+                ))}
+              </div>
+            </div>
+          );
+        }
+        if (a.controlType === "multiselect") {
+          const arr = Array.isArray(val) ? (val as string[]) : [];
+          return (
+            <div className="field" key={a.id}>{label}
+              <div className="flex-gap" style={{ flexWrap: "wrap", gap: 12 }}>
+                {a.options.map((o) => (
+                  <label key={o} className="flex-gap" style={{ cursor: "pointer" }}>
+                    <input type="checkbox" checked={arr.includes(o)} onChange={(e) => onChange(a.id, e.target.checked ? [...arr, o] : arr.filter((x) => x !== o))} /> {o}
+                  </label>
+                ))}
+              </div>
+            </div>
+          );
+        }
+        if (a.controlType === "checkbox") {
+          return (
+            <div className="field" key={a.id}>
+              <label className="flex-gap" style={{ cursor: "pointer" }}>
+                <input type="checkbox" checked={val === true} onChange={(e) => onChange(a.id, e.target.checked)} /> {a.name}{a.mandatory && <span style={{ color: "#dc2626" }}> *</span>}
+              </label>
+            </div>
+          );
+        }
+        if (a.controlType === "textarea") {
+          return <div className="field" key={a.id}>{label}<textarea rows={2} value={String(val ?? "")} onChange={(e) => onChange(a.id, e.target.value)} /></div>;
+        }
+        const inputType = a.controlType === "number" ? "number" : a.controlType === "date" ? "date" : "text";
+        return <div className="field" key={a.id}>{label}<input type={inputType} value={String(val ?? "")} onChange={(e) => onChange(a.id, e.target.value)} /></div>;
+      })}
+    </div>
+  );
+}
+
 // ── Upload / revise ──────────────────────────────────────────────────────────
 function baseName(name: string): string {
   const i = name.lastIndexOf(".");
   return i > 0 ? name.slice(0, i) : name;
+}
+function isEmptyAttr(v: unknown): boolean {
+  if (v === undefined || v === null) return true;
+  if (typeof v === "string") return v.trim() === "";
+  if (Array.isArray(v)) return v.length === 0;
+  return false;
 }
 
 function UploadDialog({ projectId, mode, doc, folders, defaultFolderId, onClose, onDone }: {
@@ -591,6 +727,24 @@ function UploadDialog({ projectId, mode, doc, folders, defaultFolderId, onClose,
   const [drag, setDrag] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [attrs, setAttrs] = useState<ApplicableAttr[]>([]);
+  const [attrValues, setAttrValues] = useState<Record<string, unknown>>({});
+
+  // Load configurable attributes applicable to the selected folder (publish only).
+  useEffect(() => {
+    if (mode !== "publish") return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const q = folderId ? `?folderId=${folderId}` : "";
+        const res = await api.get<{ items: ApplicableAttr[] }>(`/projects/${projectId}/applicable-attributes${q}`);
+        if (cancelled) return;
+        setAttrs(res.items);
+        setAttrValues((prev) => seedAttrValues(res.items, prev));
+      } catch { if (!cancelled) setAttrs([]); }
+    })();
+    return () => { cancelled = true; };
+  }, [projectId, folderId, mode]);
 
   const BLOCKED = [".exe", ".php", ".htaccess", ".bat", ".cmd", ".sh", ".com", ".msi"];
   function blocked(name: string) { const n = name.toLowerCase(); return BLOCKED.some((e) => n.endsWith(e)); }
@@ -604,6 +758,10 @@ function UploadDialog({ projectId, mode, doc, folders, defaultFolderId, onClose,
   async function submit() {
     if (!file) { setError("Select a file to upload"); return; }
     if (blocked(file.name)) { setError(`File type not allowed: ${file.name}`); return; }
+    if (mode === "publish") {
+      const missing = attrs.filter((a) => a.mandatory && isEmptyAttr(attrValues[a.id])).map((a) => a.name);
+      if (missing.length) { setError(`Please fill required attribute(s): ${missing.join(", ")}`); return; }
+    }
     setBusy(true); setError(null);
     const form = new FormData();
     form.append("file", file);
@@ -612,6 +770,7 @@ function UploadDialog({ projectId, mode, doc, folders, defaultFolderId, onClose,
       if (folderId) form.append("folderId", folderId);
       if (title) form.append("title", title);
       if (docRef.trim()) form.append("docNumber", docRef.trim());
+      if (attrs.length) form.append("attributes", JSON.stringify(attrValues));
     }
     if (revisionLabel) form.append("revisionLabel", revisionLabel);
     form.append("purposeOfIssue", purpose);
@@ -674,6 +833,7 @@ function UploadDialog({ projectId, mode, doc, folders, defaultFolderId, onClose,
               </div>
             </div>
             <div className="field"><label>Doc Title (blank = from filename)</label><input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="auto" /></div>
+            <AttributeFields attrs={attrs} values={attrValues} onChange={(id, v) => setAttrValues((p) => ({ ...p, [id]: v }))} />
           </>
         )}
 

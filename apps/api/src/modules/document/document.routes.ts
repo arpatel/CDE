@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
-import { prisma } from "@cde/db";
+import { prisma, Prisma } from "@cde/db";
 import { parse } from "../../lib/validation.js";
 import { ApiError } from "../../lib/errors.js";
 import { audit } from "../../lib/audit.js";
@@ -130,31 +130,42 @@ async function computeFolderAccess(
           (g.principalType === "role" && roleIds.includes(g.principalId))),
     );
   };
-  const directVisible = (f: (typeof folders)[number]): boolean => {
-    if (isSuper) return true;
-    const restricted = (byFolder.get(f.id)?.length ?? 0) > 0;
-    if (!restricted) return true;
-    return f.createdBy === userId || granted(f.id);
-  };
-  const visCache = new Map<string, boolean>();
-  const visible = (f: (typeof folders)[number]): boolean => {
-    const cached = visCache.get(f.id);
+  const hasOwn = (id: string) => (byFolder.get(id)?.length ?? 0) > 0;
+  // Nearest self-or-ancestor folder that has its OWN grants — that folder's ACL
+  // governs this one (inherit-by-default; an own ACL overrides and becomes the
+  // new source for its descendants). null ⇒ open (no ancestor restricts).
+  const sourceCache = new Map<string, (typeof folders)[number] | null>();
+  const sourceOf = (f: (typeof folders)[number]): (typeof folders)[number] | null => {
+    const cached = sourceCache.get(f.id);
     if (cached !== undefined) return cached;
-    let v = directVisible(f);
-    if (v && f.parentId) {
-      const parent = folderById.get(f.parentId);
-      if (parent) v = visible(parent);
+    let cur: (typeof folders)[number] | null = f;
+    let src: (typeof folders)[number] | null = null;
+    while (cur) {
+      if (hasOwn(cur.id)) { src = cur; break; }
+      cur = cur.parentId ? folderById.get(cur.parentId) ?? null : null;
     }
-    visCache.set(f.id, v);
-    return v;
+    sourceCache.set(f.id, src);
+    return src;
+  };
+  const visible = (f: (typeof folders)[number]): boolean => {
+    if (isSuper) return true;
+    if (f.createdBy === userId) return true;
+    const src = sourceOf(f);
+    if (!src) return true; // no ancestor restricts ⇒ open
+    return granted(src.id);
   };
 
-  const rows = folders.filter(visible).map((f) => ({
-    ...f,
-    restricted: (byFolder.get(f.id)?.length ?? 0) > 0,
-    grantCount: byFolder.get(f.id)?.length ?? 0,
-    canManage: canManageAll || f.createdBy === userId || granted(f.id, true),
-  }));
+  const rows = folders.filter(visible).map((f) => {
+    const src = sourceOf(f);
+    return {
+      ...f,
+      restricted: !!src,
+      inherited: !!src && src.id !== f.id,
+      inheritedFromId: src && src.id !== f.id ? src.id : null,
+      grantCount: byFolder.get(f.id)?.length ?? 0,
+      canManage: canManageAll || f.createdBy === userId || (!!src && granted(src.id, true)),
+    };
+  });
   return { rows, visibleIds: new Set(rows.map((r) => r.id)), isSuper };
 }
 
@@ -216,6 +227,7 @@ const AttributesSchema = z.object({
   type: z.string().max(60).optional(),
   purposeOfIssue: z.string().max(60).optional(),
   revisionNotes: z.string().max(2000).optional(),
+  attributes: z.record(z.any()).optional(),
 });
 
 const GrantsSchema = z.object({
@@ -292,6 +304,7 @@ export async function documentRoutes(app: FastifyInstance): Promise<void> {
         folderId: d.folderId,
         currentRevisionId: d.currentRevisionId,
         revisionLabel: rev?.revisionLabel ?? null,
+        attributes: d.attributes ?? {},
         uploadedAt: (rev?.createdAt ?? d.createdAt).toISOString(),
         uploadedBy: nameOf(uploaderId),
         createdAt: d.createdAt.toISOString(),
@@ -335,7 +348,8 @@ export async function documentRoutes(app: FastifyInstance): Promise<void> {
     },
   );
 
-  // List a folder's access grants (with principal names resolved).
+  // A folder's effective access grants: its OWN grants if any (independent),
+  // otherwise the grants INHERITED from the nearest ancestor that has its own.
   app.get(
     "/projects/:projectId/folders/:id/permissions",
     { preHandler: requirePermission("document:read") },
@@ -344,9 +358,28 @@ export async function documentRoutes(app: FastifyInstance): Promise<void> {
       const { projectId, id } = req.params as { projectId: string; id: string };
       const folder = await prisma.folder.findFirst({ where: { id, tenantId, projectId, isDeleted: false } });
       if (!folder) throw ApiError.notFound("Folder not found");
-      const grants = await prisma.folderPermission.findMany({ where: { tenantId, folderId: id } });
-      const userIds = grants.filter((g) => g.principalType === "user").map((g) => g.principalId);
-      const roleIds = grants.filter((g) => g.principalType === "role").map((g) => g.principalId);
+
+      const folders = await prisma.folder.findMany({
+        where: { tenantId, projectId, isDeleted: false },
+        select: { id: true, parentId: true, name: true },
+      });
+      const grants = await prisma.folderPermission.findMany({ where: { tenantId, folder: { projectId } } });
+      const byFolder = new Map<string, typeof grants>();
+      for (const g of grants) { const a = byFolder.get(g.folderId) ?? []; a.push(g); byFolder.set(g.folderId, a); }
+      const byId = new Map(folders.map((f) => [f.id, f]));
+
+      // Find the source folder: this folder if it has own grants, else nearest ancestor.
+      let source: { id: string; name: string } | null = null;
+      let cur: { id: string; parentId: string | null; name: string } | undefined = folder;
+      while (cur) {
+        if ((byFolder.get(cur.id)?.length ?? 0) > 0) { source = { id: cur.id, name: cur.name }; break; }
+        cur = cur.parentId ? byId.get(cur.parentId) : undefined;
+      }
+      const own = (byFolder.get(id)?.length ?? 0) > 0;
+      const effective = source ? byFolder.get(source.id) ?? [] : [];
+
+      const userIds = effective.filter((g) => g.principalType === "user").map((g) => g.principalId);
+      const roleIds = effective.filter((g) => g.principalType === "role").map((g) => g.principalId);
       const [users, roles] = await Promise.all([
         prisma.user.findMany({ where: { id: { in: userIds } }, select: { id: true, displayName: true, email: true } }),
         prisma.role.findMany({ where: { id: { in: roleIds } }, select: { id: true, name: true } }),
@@ -354,7 +387,7 @@ export async function documentRoutes(app: FastifyInstance): Promise<void> {
       const userMap = new Map(users.map((u) => [u.id, u]));
       const roleMap = new Map(roles.map((r) => [r.id, r]));
       return {
-        items: grants.map((g) => ({
+        items: effective.map((g) => ({
           principalType: g.principalType,
           principalId: g.principalId,
           accessLevel: g.accessLevel,
@@ -363,13 +396,18 @@ export async function documentRoutes(app: FastifyInstance): Promise<void> {
               ? userMap.get(g.principalId)?.displayName ?? userMap.get(g.principalId)?.email ?? "Unknown user"
               : roleMap.get(g.principalId)?.name ?? "Unknown role",
         })),
-        restricted: grants.length > 0,
-        total: grants.length,
+        own,                                            // folder has its own ACL (independent)
+        inherited: !!source && !own,                    // showing grants inherited from an ancestor
+        inheritedFrom: source && !own ? source : null,  // { id, name } of the ancestor
+        restricted: !!source,
+        total: effective.length,
       };
     },
   );
 
-  // Replace a folder's access grants. Empty list = open folder (project-wide).
+  // Replace a folder's OWN access grants. A non-empty list makes the folder
+  // independent (its ACL overrides the parent). An empty list removes its own
+  // grants so it reverts to inheriting from the nearest ancestor (or open).
   app.put(
     "/projects/:projectId/folders/:id/permissions",
     { preHandler: requirePermission("document:update") },
@@ -512,7 +550,7 @@ export async function documentRoutes(app: FastifyInstance): Promise<void> {
               docNumber,
               type,
               status,
-              attributes: attrValues,
+              attributes: attrValues as Prisma.InputJsonValue,
               createdBy: userId,
             },
           });
@@ -633,6 +671,15 @@ export async function documentRoutes(app: FastifyInstance): Promise<void> {
           if (dup) throw ApiError.conflict(`Doc Ref "${next}" already exists in this folder`);
           docData.docNumber = next || null;
         }
+      }
+
+      // Configurable attribute values — re-validate mandatory ones for the folder.
+      if (body.attributes !== undefined) {
+        const merged = { ...(doc.attributes as Record<string, unknown>), ...body.attributes };
+        const applicable = await applicableAttributes(tenantId, projectId, doc.folderId);
+        const missing = applicable.filter((a) => a.mandatory && isEmptyValue(merged[a.id])).map((a) => a.name);
+        if (missing.length) throw ApiError.unprocessable(`Missing required attribute(s): ${missing.join(", ")}`);
+        docData.attributes = merged;
       }
 
       // Current-revision attributes (purpose / notes / status).
