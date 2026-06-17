@@ -4,7 +4,8 @@ import { prisma } from "@cde/db";
 import { parse } from "../../lib/validation.js";
 import { ApiError } from "../../lib/errors.js";
 import { audit } from "../../lib/audit.js";
-import { authenticate, ctx, requirePermission } from "../../middleware/authenticate.js";
+import { authenticate, ctx, requirePermission, type AuthContext } from "../../middleware/authenticate.js";
+import { assertProjectAccess } from "../../lib/access.js";
 
 const CreateSchema = z.object({
   name: z.string().min(2).max(160),
@@ -96,6 +97,7 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
   app.get("/projects/:id", { preHandler: requirePermission("project:read") }, async (req) => {
     const { tenantId } = ctx(req);
     const { id } = req.params as { id: string };
+    await assertProjectAccess(ctx(req), id); // system-level data-scope gate
     const project = await prisma.project.findFirst({
       where: { id, tenantId, isDeleted: false },
       include: { ownerOrg: { select: { id: true, name: true } } },
@@ -108,6 +110,7 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
   app.patch("/projects/:id", { preHandler: requirePermission("project:update") }, async (req) => {
     const { tenantId, userId } = ctx(req);
     const { id } = req.params as { id: string };
+    await assertProjectAccess(ctx(req), id);
     const existing = await prisma.project.findFirst({ where: { id, tenantId, isDeleted: false } });
     if (!existing) throw ApiError.notFound();
     const body = parse(UpdateSchema, req.body);
@@ -140,6 +143,7 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
     async (req, reply) => {
       const { tenantId, userId } = ctx(req);
       const { id } = req.params as { id: string };
+      await assertProjectAccess(ctx(req), id);
       const existing = await prisma.project.findFirst({
         where: { id, tenantId, isDeleted: false },
       });
@@ -167,7 +171,7 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
     async (req) => {
       const { tenantId } = ctx(req);
       const { id } = req.params as { id: string };
-      await assertProject(tenantId, id);
+      await assertProject(ctx(req), id);
       const members = await prisma.projectMember.findMany({
         where: { projectId: id },
         include: {
@@ -186,7 +190,7 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
     async (req, reply) => {
       const { tenantId, userId } = ctx(req);
       const { id } = req.params as { id: string };
-      await assertProject(tenantId, id);
+      await assertProject(ctx(req), id);
       const body = parse(AddMemberSchema, req.body);
 
       // Ensure the target user belongs to the same tenant.
@@ -224,7 +228,7 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
     async (req) => {
       const { tenantId, userId } = ctx(req);
       const { id } = req.params as { id: string };
-      await assertProject(tenantId, id);
+      await assertProject(ctx(req), id);
       const body = parse(
         z.object({ userIds: z.array(z.string().uuid()).min(1), roleId: z.string().uuid() }),
         req.body,
@@ -269,7 +273,7 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
     async (req) => {
       const { tenantId, userId } = ctx(req);
       const { id } = req.params as { id: string };
-      await assertProject(tenantId, id);
+      await assertProject(ctx(req), id);
       const body = parse(z.object({ userIds: z.array(z.string().uuid()).min(1) }), req.body);
       const result = await prisma.projectMember.deleteMany({
         where: { projectId: id, userId: { in: body.userIds } },
@@ -294,7 +298,7 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
     async (req) => {
       const { tenantId, userId } = ctx(req);
       const { id, memberUserId } = req.params as { id: string; memberUserId: string };
-      await assertProject(tenantId, id);
+      await assertProject(ctx(req), id);
       const body = parse(z.object({ roleId: z.string().uuid() }), req.body);
       const role = await prisma.role.findFirst({ where: { id: body.roleId, tenantId } });
       if (!role) throw ApiError.unprocessable("Role does not belong to this tenant");
@@ -328,7 +332,7 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
       const { id, memberUserId } = req.params as { id: string; memberUserId: string };
       // ?roleId=… removes only that role pairing; omitted removes the user entirely.
       const roleId = (req.query as { roleId?: string }).roleId;
-      await assertProject(tenantId, id);
+      await assertProject(ctx(req), id);
       const result = await prisma.projectMember.deleteMany({
         where: { projectId: id, userId: memberUserId, ...(roleId ? { roleId } : {}) },
       });
@@ -353,7 +357,7 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
     async (req) => {
       const { tenantId } = ctx(req);
       const { id } = req.params as { id: string };
-      const project = await assertProject(tenantId, id);
+      const project = await assertProject(ctx(req), id);
       const memberCount = await prisma.projectMember.count({ where: { projectId: id } });
       return {
         project: { id: project.id, name: project.name, code: project.code, status: project.status },
@@ -370,8 +374,6 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
   );
 }
 
-async function assertProject(tenantId: string, id: string) {
-  const project = await prisma.project.findFirst({ where: { id, tenantId, isDeleted: false } });
-  if (!project) throw ApiError.notFound();
-  return project;
+async function assertProject(auth: AuthContext, id: string) {
+  return assertProjectAccess(auth, id);
 }
