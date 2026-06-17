@@ -70,7 +70,7 @@ export async function roleRoutes(app: FastifyInstance): Promise<void> {
     // Everyone else gets the standard own-organisation scope and no wildcard.
     if (!isSuper) {
       data.dataScope = "OWN_ORG";
-      data.permissions = data.permissions.filter((p) => p !== "*");
+      data.permissions = (data.permissions ?? []).filter((p) => p !== "*");
     }
     const role = await prisma.role
       .create({ data: { tenantId, ...data } })

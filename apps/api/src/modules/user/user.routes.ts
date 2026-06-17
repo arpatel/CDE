@@ -197,10 +197,13 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
   app.post("/users/:id/memberships", { preHandler: requirePermission("user:manage") }, async (req, reply) => {
     const { tenantId, userId } = ctx(req);
     const { id } = req.params as { id: string };
+    const { permissions, organizationIds } = ctx(req);
+    const isSuper = permissions.has("*");
     const target = await prisma.user.findFirst({ where: { id, tenantId } });
     if (!target) throw ApiError.notFound();
     const body = parse(MembershipSchema, req.body);
-    await assertTenantOrgAndRole(tenantId, body.organizationId, body.roleId);
+    const role = await assertTenantOrgAndRole(tenantId, body.organizationId, body.roleId);
+    assertCanAssign(isSuper, organizationIds, body.organizationId, role);
 
     // Reassign: a user has one primary organisation + role. Replace any existing
     // membership so admin edits don't accumulate duplicates.
