@@ -298,6 +298,61 @@ const GrantsSchema = z.object({
     .max(500),
 });
 
+// Create a new revision from an in-memory buffer and point the document at it.
+// Shared by the HTTP `revise` endpoint and the OnlyOffice save-back callback so
+// both produce identical revisions (revisionNumber++, new uploader, version++).
+export async function createRevisionFromBuffer(opts: {
+  tenantId: string;
+  projectId: string;
+  documentId: string;
+  buffer: Buffer;
+  filename: string;
+  mimeType: string | null;
+  uploaderId: string | null;
+  status?: string;
+  purposeOfIssue?: string;
+  revisionLabel?: string;
+  revisionNotes?: string | null;
+  ip?: string | null;
+}) {
+  const { tenantId, projectId, documentId, buffer, filename, mimeType, uploaderId } = opts;
+  const count = await prisma.documentRevision.count({ where: { documentId } });
+  const revId = randomUUID();
+  const fileKey = revFileKey(tenantId, projectId, documentId, revId, filename);
+  const saved = await saveBuffer(fileKey, buffer);
+  const rev = await prisma.documentRevision.create({
+    data: {
+      id: revId,
+      documentId,
+      revisionNumber: count + 1,
+      revisionLabel: opts.revisionLabel?.trim() || `P${String(count + 1).padStart(2, "0")}`,
+      fileKey,
+      originalName: filename,
+      fileSize: BigInt(saved.size),
+      mimeType,
+      checksum: saved.checksum,
+      uploaderId,
+      status: opts.status ?? "uploaded",
+      purposeOfIssue: opts.purposeOfIssue ?? "For Information",
+      revisionNotes: opts.revisionNotes ?? null,
+    },
+  });
+  const doc = await prisma.document.update({
+    where: { id: documentId },
+    data: { currentRevisionId: rev.id, ...(opts.status ? { status: opts.status } : {}), version: { increment: 1 } },
+  });
+  await audit({
+    tenantId,
+    userId: uploaderId,
+    action: "document.revised",
+    resourceType: "document",
+    resourceId: documentId,
+    changes: { revisionLabel: rev.revisionLabel },
+    ip: opts.ip ?? null,
+  });
+  return { doc, rev };
+}
+
 export async function documentRoutes(app: FastifyInstance): Promise<void> {
   app.addHook("preHandler", authenticate);
 
