@@ -62,10 +62,18 @@ export async function roleRoutes(app: FastifyInstance): Promise<void> {
   });
 
   app.post("/roles", { preHandler: requirePermission("role:manage") }, async (req, reply) => {
-    const { tenantId, userId } = ctx(req);
+    const { tenantId, userId, permissions } = ctx(req);
+    const isSuper = permissions.has("*");
     const body = parse(CreateSchema, req.body);
+    const data = { ...body };
+    // Only a super admin assigns the data-access level or grants full access (*).
+    // Everyone else gets the standard own-organisation scope and no wildcard.
+    if (!isSuper) {
+      data.dataScope = "OWN_ORG";
+      data.permissions = data.permissions.filter((p) => p !== "*");
+    }
     const role = await prisma.role
-      .create({ data: { tenantId, ...body } })
+      .create({ data: { tenantId, ...data } })
       .catch(() => {
         throw ApiError.conflict("A role with that name already exists");
       });
