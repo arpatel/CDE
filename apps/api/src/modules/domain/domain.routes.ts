@@ -6,7 +6,8 @@ import { registerCrud } from "../../lib/crud.js";
 import { parse } from "../../lib/validation.js";
 import { ApiError } from "../../lib/errors.js";
 import { audit } from "../../lib/audit.js";
-import { authenticate, ctx, requirePermission } from "../../middleware/authenticate.js";
+import { authenticate, ctx, requirePermission, type AuthContext } from "../../middleware/authenticate.js";
+import { assertProjectAccess } from "../../lib/access.js";
 import { DOMAIN_MODULES } from "./schemas.js";
 
 export async function domainRoutes(app: FastifyInstance): Promise<void> {

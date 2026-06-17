@@ -6,7 +6,8 @@ import { prisma, Prisma } from "@cde/db";
 import { parse } from "../../lib/validation.js";
 import { ApiError } from "../../lib/errors.js";
 import { audit } from "../../lib/audit.js";
-import { authenticate, ctx, requirePermission } from "../../middleware/authenticate.js";
+import { authenticate, ctx, requirePermission, type AuthContext } from "../../middleware/authenticate.js";
+import { assertProjectAccess } from "../../lib/access.js";
 import { isBlockedFile, sanitizeFilename, saveBuffer, streamFor } from "../../lib/storage.js";
 
 interface UploadedFile {
@@ -16,10 +17,9 @@ interface UploadedFile {
   buffer: Buffer;
 }
 
-async function assertProject(tenantId: string, projectId: string) {
-  const p = await prisma.project.findFirst({ where: { id: projectId, tenantId, isDeleted: false } });
-  if (!p) throw ApiError.notFound("Project not found");
-  return p;
+// Enforces the caller's system-level data scope for this project.
+async function assertProject(auth: AuthContext, projectId: string) {
+  return assertProjectAccess(auth, projectId);
 }
 
 // Drain a multipart request into text fields + buffered files.
@@ -266,7 +266,7 @@ export async function documentRoutes(app: FastifyInstance): Promise<void> {
   app.get("/projects/:projectId/document-register", { preHandler: requirePermission("document:read") }, async (req) => {
     const { tenantId, userId, permissions } = ctx(req);
     const { projectId } = req.params as { projectId: string };
-    await assertProject(tenantId, projectId);
+    await assertProject(ctx(req), projectId);
     const { visibleIds, isSuper } = await computeFolderAccess(tenantId, projectId, userId, permissions);
 
     const docs = await prisma.document.findMany({
@@ -318,7 +318,7 @@ export async function documentRoutes(app: FastifyInstance): Promise<void> {
   app.get("/projects/:projectId/applicable-attributes", { preHandler: requirePermission("document:read") }, async (req) => {
     const { tenantId } = ctx(req);
     const { projectId } = req.params as { projectId: string };
-    await assertProject(tenantId, projectId);
+    await assertProject(ctx(req), projectId);
     const folderId = (req.query as { folderId?: string }).folderId || null;
     const items = await applicableAttributes(tenantId, projectId, folderId);
     return { items, total: items.length };
@@ -331,7 +331,7 @@ export async function documentRoutes(app: FastifyInstance): Promise<void> {
     async (req) => {
       const { tenantId } = ctx(req);
       const { projectId } = req.params as { projectId: string };
-      await assertProject(tenantId, projectId);
+      await assertProject(ctx(req), projectId);
       const members = await prisma.projectMember.findMany({
         where: { projectId },
         include: { user: { select: { id: true, displayName: true, email: true } } },
@@ -457,7 +457,7 @@ export async function documentRoutes(app: FastifyInstance): Promise<void> {
   app.post("/projects/:projectId/folders", { preHandler: requirePermission("document:create") }, async (req, reply) => {
     const { tenantId, userId } = ctx(req);
     const { projectId } = req.params as { projectId: string };
-    await assertProject(tenantId, projectId);
+    await assertProject(ctx(req), projectId);
     const body = parse(FolderSchema, req.body);
     let pathStr = "/";
     if (body.parentId) {
@@ -479,7 +479,7 @@ export async function documentRoutes(app: FastifyInstance): Promise<void> {
     async (req, reply) => {
       const { tenantId, userId } = ctx(req);
       const { projectId } = req.params as { projectId: string };
-      const project = await assertProject(tenantId, projectId);
+      const project = await assertProject(ctx(req), projectId);
       const { fields, files } = await readMultipart(req);
 
       const primary = files.file;
