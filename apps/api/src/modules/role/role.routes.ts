@@ -12,6 +12,8 @@ const CreateSchema = z.object({
   permissions: z.array(z.string()).default([]),
   // Data visibility level for users holding this role.
   dataScope: z.enum(["OWN", "OWN_ORG", "ALL_ORG"]).default("OWN_ORG"),
+  // "project" = functional role assigned per project; "org" = access tier.
+  level: z.enum(["org", "project"]).default("project"),
 });
 
 const UpdateSchema = CreateSchema.partial();
@@ -71,6 +73,7 @@ export async function roleRoutes(app: FastifyInstance): Promise<void> {
     if (!isSuper) {
       data.dataScope = "OWN_ORG";
       data.permissions = (data.permissions ?? []).filter((p) => p !== "*");
+      data.level = "project"; // only a super admin defines org-level access tiers
     }
     const role = await prisma.role
       .create({ data: { tenantId, ...data } })

@@ -11,7 +11,7 @@ import { api, fetcher } from "@/lib/api";
 interface ProjectDetail { id: string; name: string; code: string; status: string; ownerOrg: { id: string; name: string } | null }
 interface Member { id: string; userId: string; role: { id: string; name: string } | null; user: { id: string; displayName: string; email: string } }
 interface UserLite { id: string; displayName: string; email: string }
-interface Role { id: string; name: string; dataScope?: string }
+interface Role { id: string; name: string; dataScope?: string; level?: string }
 
 function initials(name: string) {
   return name.split(" ").map((s) => s[0]).slice(0, 2).join("").toUpperCase();
@@ -29,8 +29,9 @@ export default function ProjectDetailPage() {
   const { data: roles, mutate: mutateRoles } = useSWR<{ items: Role[] }>("/roles", fetcher);
 
   const memberItems = members?.items ?? [];
-  // ALL_ORG roles are tenant-wide support / super-admin — not assignable per project.
-  const roleList = (roles?.items ?? []).filter((r) => r.dataScope !== "ALL_ORG");
+  // Only functional (project-level) roles are assignable here; org access tiers
+  // (Super Admin / Org Admin / Org Member) belong to the Users screen.
+  const roleList = (roles?.items ?? []).filter((r) => (r.level ?? "project") === "project");
   const allUsers = users?.items ?? [];
   const distinctUsers = new Set(memberItems.map((m) => m.userId)).size;
 

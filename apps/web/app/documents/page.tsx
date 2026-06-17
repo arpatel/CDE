@@ -549,8 +549,11 @@ function ManageAccessDialog({ projectId, folder, onClose, onSaved }: {
 }) {
   const { data: princ } = useSWR<{ users: Principal[]; roles: Principal[] }>(`/projects/${projectId}/folder-principals`, fetcher);
   const { data: current } = useSWR<PermsResponse>(`/projects/${projectId}/folders/${folder.id}/permissions`, fetcher);
+  // Top-level folders (directly under "All Documents") have no parent to inherit
+  // from, so access must be set explicitly here.
+  const isTopLevel = !folder.parentId;
   // "inherit" = follow parent (no own ACL); "custom" = independent own ACL.
-  const [mode, setMode] = useState<"inherit" | "custom">("inherit");
+  const [mode, setMode] = useState<"inherit" | "custom">(isTopLevel ? "custom" : "inherit");
   // key = `user:<id>` | `role:<id>` → access level (absence = no access)
   const [grants, setGrants] = useState<Record<string, Level>>({});
   const [busy, setBusy] = useState(false);
@@ -562,10 +565,11 @@ function ManageAccessDialog({ projectId, folder, onClose, onSaved }: {
       const next: Record<string, Level> = {};
       for (const g of current.items) next[`${g.principalType}:${g.principalId}`] = g.accessLevel;
       setGrants(next); // effective grants (own, or inherited copy) — seeds the editor when overriding
-      setMode(current.own ? "custom" : "inherit");
+      // Default top-level folders to custom access; deeper folders inherit by default.
+      setMode(current.own ? "custom" : isTopLevel ? "custom" : "inherit");
       loaded.current = true;
     }
-  }, [current]);
+  }, [current, isTopLevel]);
 
   function toggle(type: "user" | "role", id: string, checked: boolean) {
     setGrants((g) => {
@@ -631,12 +635,13 @@ function ManageAccessDialog({ projectId, folder, onClose, onSaved }: {
         <div className="field" style={{ marginTop: 4 }}>
           <label className="flex-gap" style={{ cursor: "pointer", marginBottom: 6 }}>
             <input type="radio" name="acl-mode" checked={mode === "inherit"} onChange={() => setMode("inherit")} />
-            <span>{parentName ? `Inherit access from “${parentName}”` : "Open / inherit (no restriction)"}</span>
+            <span>{parentName ? `Inherit access from “${parentName}”` : "Open to everyone (no restriction)"}</span>
           </label>
           <label className="flex-gap" style={{ cursor: "pointer" }}>
             <input type="radio" name="acl-mode" checked={mode === "custom"} onChange={() => setMode("custom")} />
-            <span>Set custom access (independent — overrides parent)</span>
+            <span>{isTopLevel ? "Set custom access (choose who can see it)" : "Set custom access (independent — overrides parent)"}</span>
           </label>
+          {isTopLevel && <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>Top-level folder — no parent to inherit from, so set access explicitly.</div>}
         </div>
 
         <p className="muted" style={{ fontSize: 12, marginTop: 0 }}>
