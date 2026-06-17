@@ -71,6 +71,25 @@ async function assertTenantOrgAndRole(tenantId: string, organizationId: string, 
   if (!org) throw ApiError.unprocessable("Organisation does not belong to this tenant");
   const role = await prisma.role.findFirst({ where: { id: roleId, tenantId } });
   if (!role) throw ApiError.unprocessable("Role does not belong to this tenant");
+  return role;
+}
+
+// A non-super admin (e.g. an org "client") may only place users in their OWN
+// organisation, and may not hand out a super-admin / all-organisation role.
+function assertCanAssign(
+  isSuper: boolean,
+  organizationIds: string[],
+  organizationId: string,
+  role: { permissions: unknown; dataScope: string },
+) {
+  if (isSuper) return;
+  if (!organizationIds.includes(organizationId)) {
+    throw ApiError.forbidden("You can only add users to your own organisation");
+  }
+  const perms = Array.isArray(role.permissions) ? (role.permissions as string[]) : [];
+  if (perms.includes("*") || role.dataScope === "ALL_ORG") {
+    throw ApiError.forbidden("You cannot assign a super-admin / all-organisation role");
+  }
 }
 
 export async function userRoutes(app: FastifyInstance): Promise<void> {
@@ -94,10 +113,12 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
 
   // POST /users — admin creates a user and assigns org + role
   app.post("/users", { preHandler: requirePermission("user:manage") }, async (req, reply) => {
-    const { tenantId, userId } = ctx(req);
+    const { tenantId, userId, permissions, organizationIds } = ctx(req);
+    const isSuper = permissions.has("*");
     const body = parse(CreateUserSchema, req.body);
     const email = body.email.toLowerCase();
-    await assertTenantOrgAndRole(tenantId, body.organizationId, body.roleId);
+    const role = await assertTenantOrgAndRole(tenantId, body.organizationId, body.roleId);
+    assertCanAssign(isSuper, organizationIds, body.organizationId, role);
 
     const existing = await prisma.user.findFirst({ where: { tenantId, email } });
     if (existing) throw ApiError.conflict("A user with that email already exists in this tenant");

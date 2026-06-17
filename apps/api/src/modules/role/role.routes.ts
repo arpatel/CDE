@@ -83,27 +83,34 @@ export async function roleRoutes(app: FastifyInstance): Promise<void> {
       action: "role.created",
       resourceType: "role",
       resourceId: role.id,
-      changes: body,
+      changes: data,
       ip: req.ip,
     });
     return reply.code(201).send(role);
   });
 
   app.patch("/roles/:id", { preHandler: requirePermission("role:manage") }, async (req) => {
-    const { tenantId, userId } = ctx(req);
+    const { tenantId, userId, permissions } = ctx(req);
+    const isSuper = permissions.has("*");
     const { id } = req.params as { id: string };
     const existing = await prisma.role.findFirst({ where: { id, tenantId } });
     if (!existing) throw ApiError.notFound();
     if (existing.isSystem) throw ApiError.unprocessable("System roles cannot be modified");
     const body = parse(UpdateSchema, req.body);
-    const role = await prisma.role.update({ where: { id }, data: body });
+    const data = { ...body };
+    // Non-super admins cannot change the data-access level or grant full access.
+    if (!isSuper) {
+      delete data.dataScope;
+      if (data.permissions) data.permissions = data.permissions.filter((p) => p !== "*");
+    }
+    const role = await prisma.role.update({ where: { id }, data });
     await audit({
       tenantId,
       userId,
       action: "role.updated",
       resourceType: "role",
       resourceId: id,
-      changes: body,
+      changes: data,
       ip: req.ip,
     });
     return role;
