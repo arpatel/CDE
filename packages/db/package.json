@@ -14,6 +14,7 @@
     "migrate:deploy": "prisma migrate deploy",
     "seed": "tsx src/seed.ts",
     "ensure-indexes": "tsx src/ensure-indexes.ts",
+    "ensure-roles": "tsx src/ensure-roles.ts",
     "studio": "prisma studio",
     "typecheck": "tsc --noEmit"
   },

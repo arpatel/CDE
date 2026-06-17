@@ -138,6 +138,9 @@ model Role {
   name        String
   description String?
   isSystem    Boolean  @default(false) @map("is_system")
+  // "org"  → an access tier assigned on the Users screen (Super Admin / Org Admin / Org Member)
+  // "project" → a functional role assigned per project (carries module permissions)
+  level       String   @default("project")
   permissions Json     @default("[]")
   // Data visibility level: OWN (assigned records only) | OWN_ORG (own org's data)
   // | ALL_ORG (every org's data, like super admin).

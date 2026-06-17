@@ -69,15 +69,39 @@ export async function authenticate(req: FastifyRequest, _reply: FastifyReply): P
   };
 }
 
+// Permissions a user gains from the role(s) they hold IN a specific project.
+// Functional roles live at the project level, so capabilities can be granted
+// per project on top of the org-level access tier.
+async function projectRolePermissions(userId: string, projectId: string): Promise<Set<string>> {
+  const members = await prisma.projectMember.findMany({
+    where: { projectId, userId, roleId: { not: null } },
+    include: { role: { select: { permissions: true } } },
+  });
+  const perms = new Set<string>();
+  for (const m of members) {
+    const list = Array.isArray(m.role?.permissions) ? (m.role!.permissions as string[]) : [];
+    for (const p of list) perms.add(String(p));
+  }
+  return perms;
+}
+
 // preHandler factory: enforces that the caller holds every required permission.
+// Effective permissions = org access tier ∪ (project roles, on project routes).
 export function requirePermission(...required: string[]) {
   return async function permissionGuard(req: FastifyRequest, _reply: FastifyReply): Promise<void> {
     const perms = req.auth?.permissions;
     if (!perms) throw ApiError.unauthorized();
     if (perms.has("*")) return;
-    for (const r of required) {
-      if (!perms.has(r)) throw ApiError.forbidden(`Missing required permission: ${r}`);
+    if (required.every((r) => perms.has(r))) return;
+
+    // On project-scoped routes, top up with the caller's project-role permissions.
+    const projectId = (req.params as { projectId?: string } | undefined)?.projectId;
+    if (projectId && req.auth) {
+      const extra = await projectRolePermissions(req.auth.userId, projectId);
+      if (required.every((r) => perms.has(r) || extra.has(r))) return;
     }
+    const missing = required.find((r) => !perms.has(r));
+    throw ApiError.forbidden(`Missing required permission: ${missing}`);
   };
 }
 

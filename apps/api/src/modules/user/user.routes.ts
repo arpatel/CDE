@@ -92,6 +92,24 @@ function assertCanAssign(
   }
 }
 
+// Active users in the tenant who hold a super-admin role (permission "*" or
+// dataScope ALL_ORG). Used to guarantee the tenant never loses its last one.
+async function superAdminUserIds(tenantId: string): Promise<Set<string>> {
+  const roles = await prisma.role.findMany({
+    where: { tenantId },
+    select: { id: true, permissions: true, dataScope: true },
+  });
+  const superRoleIds = roles
+    .filter((r) => (Array.isArray(r.permissions) && (r.permissions as string[]).includes("*")) || r.dataScope === "ALL_ORG")
+    .map((r) => r.id);
+  if (superRoleIds.length === 0) return new Set();
+  const memberships = await prisma.userOrgMembership.findMany({
+    where: { roleId: { in: superRoleIds }, user: { tenantId, status: "ACTIVE" } },
+    select: { userId: true },
+  });
+  return new Set(memberships.map((m) => m.userId));
+}
+
 export async function userRoutes(app: FastifyInstance): Promise<void> {
   app.addHook("preHandler", authenticate);
 
@@ -205,6 +223,15 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
     const role = await assertTenantOrgAndRole(tenantId, body.organizationId, body.roleId);
     assertCanAssign(isSuper, organizationIds, body.organizationId, role);
 
+    // Don't strip the tenant's last super admin by moving them to a normal role.
+    const newRoleIsSuper = (Array.isArray(role.permissions) && (role.permissions as string[]).includes("*")) || role.dataScope === "ALL_ORG";
+    if (!newRoleIsSuper) {
+      const supers = await superAdminUserIds(tenantId);
+      if (supers.has(id) && supers.size <= 1) {
+        throw ApiError.unprocessable("This is the last super admin — assign another super admin first.");
+      }
+    }
+
     // Reassign: a user has one primary organisation + role. Replace any existing
     // membership so admin edits don't accumulate duplicates.
     const membership = await prisma.$transaction(async (tx) => {
@@ -232,6 +259,10 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
     if (id === userId) throw ApiError.unprocessable("You cannot deactivate your own account");
     const existing = await prisma.user.findFirst({ where: { id, tenantId } });
     if (!existing) throw ApiError.notFound();
+    const supers = await superAdminUserIds(tenantId);
+    if (supers.has(id) && supers.size <= 1) {
+      throw ApiError.unprocessable("This is the last super admin — assign another super admin before deactivating.");
+    }
     const updated = await prisma.user.update({ where: { id }, data: { status: "DISABLED" } });
     await audit({
       tenantId,
