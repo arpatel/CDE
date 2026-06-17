@@ -237,12 +237,14 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
       });
       const validIds = new Set(valid.map((u) => u.id));
 
+      // Add each user TO this role (a user may hold several roles — additive,
+      // never removes their other roles). Idempotent per (user, role).
       let updated = 0;
       for (const uid of body.userIds) {
         if (!validIds.has(uid)) continue;
         await prisma.projectMember.upsert({
-          where: { projectId_userId: { projectId: id, userId: uid } },
-          update: { roleId: body.roleId },
+          where: { projectId_userId_roleId: { projectId: id, userId: uid, roleId: body.roleId } },
+          update: {},
           create: { projectId: id, userId: uid, roleId: body.roleId, invitedBy: userId, acceptedAt: new Date() },
         });
         updated++;

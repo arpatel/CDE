@@ -241,7 +241,8 @@ model ProjectMember {
   user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
   role    Role?   @relation(fields: [roleId], references: [id])
 
-  @@unique([projectId, userId])
+  // A user can hold multiple roles in a project (one row per role).
+  @@unique([projectId, userId, roleId])
   @@map("project_members")
 }
 
