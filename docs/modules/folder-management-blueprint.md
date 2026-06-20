@@ -404,6 +404,21 @@ erDiagram
 | `GET` | `/projects/:projectId/folder-principals` | `document:read` | Access-picker principals: project members (de-duplicated) + **this project's** roles |
 | `GET` | `/projects/:projectId/folders/:id/permissions` | `document:read` | Effective grants (own, or inherited copy) |
 | `PUT` | `/projects/:projectId/folders/:id/permissions` | `document:update` + folder `manage` | Replace the folder's own grants |
+| `GET` | `/projects/:projectId/documents/:id/editor-config` | `document:read` + folder `edit` | Start an OnlyOffice session: checks the doc out, returns a signed DocEditor config |
+| `GET` | `/projects/:projectId/documents/:id/revisions/:revId/editor-contents` | URL editor-token | The Doc Server downloads the file to open (token-scoped, no Bearer) |
+| `POST` | `/projects/:projectId/documents/:id/editor-callback` | URL editor-token + DS-signed body | Save-back: writes the edited file as a **new revision** (publisher = editor, rev++), releases the lock on final save |
+
+#### Online editing (OnlyOffice) — as-built ✅
+Right-click a docx/xlsx/pptx → **Edit online** opens the file in the browser via the
+**OnlyOffice Document Server** (Docker service `onlyoffice`, `pnpm office:up`). It's a
+**single-editor** flow: opening **checks the document out** (existing `lockedBy` lock); a
+second user is blocked until it's released. On close the Doc Server posts the edited bytes
+to `editor-callback`, which creates a new revision through the shared
+`createRevisionFromBuffer` helper (same metadata, **only publisher + revision number
+change**) and clears the lock. Config + callback are JWT-signed with
+`ONLYOFFICE_JWT_SECRET`; the file URLs carry a short-lived, doc-scoped token because the
+container can't send the user's Bearer header. **No DB schema change** — reuses
+`DocumentRevision` + the checkout lock.
 
 ### 8.2 Target endpoints *(⏭)*
 

@@ -30,6 +30,7 @@ docs/         compressed SPEC / ROADMAP / ARCHITECTURE + docs/modules/*
 |---|---|
 | `pnpm install` | Install (pnpm workspace; `allowBuilds` in `pnpm-workspace.yaml` permits Prisma/esbuild scripts) |
 | `pnpm db:up` / `db:down` | Start / stop Postgres 16 + Redis 7 (Docker Compose) |
+| `pnpm office:up` / `office:down` | Start / stop OnlyOffice Document Server (`:8082`) for in-browser Office editing |
 | `pnpm db:migrate` | `prisma migrate dev` |
 | `pnpm db:seed` | Seed demo tenant (`admin@demo.cde.local` / `Password123!`) |
 | `pnpm dev` | API only (`:4000`) |
@@ -72,6 +73,7 @@ Runs on the developer's **local PostgreSQL 18**, port **5433**, database **`CDE`
 - pnpm blocks build scripts by default; approved ones are listed under `allowBuilds` in `pnpm-workspace.yaml`.
 - Fastify rejects body-less POSTs without `Content-Type`; a catch-all content-type parser in `app.ts` tolerates them (needed for action endpoints like `/close`, `/approve`).
 - In PowerShell test scripts, `$pid` is reserved — use another name.
+- **OnlyOffice (online editing):** runs as the `onlyoffice` Docker service (`pnpm office:up`, browser-facing `:8082`). The container reaches the API via `host.docker.internal` — `API_INTERNAL_URL` (`.env`) must point there, not `localhost`. Three env vars drive it: `ONLYOFFICE_JWT_SECRET` (shared secret signing the editor config + save-back callback), `ONLYOFFICE_PUBLIC_URL`, `API_INTERNAL_URL`. The save-back callback (`POST …/editor-callback`) creates a new revision via the shared `createRevisionFromBuffer` helper; the `editor-contents`/`editor-callback` routes authenticate by a doc-scoped token in the URL (the DS can't send our Bearer header), so they live in `editor.routes.ts` without the global `authenticate` hook. No DB schema change — it reuses `DocumentRevision` + the checkout lock.
 
 ## Module docs
 
