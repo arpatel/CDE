@@ -140,6 +140,9 @@ tr:hover td{background:#f8fafc}
 .viewer-title{font-size:15px;font-weight:700;color:#1e293b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .viewer-body{flex:1;min-height:0;background:#f1f5f9;overflow:auto;display:flex;flex-direction:column}
 .viewer-frame{flex:1;width:100%;height:100%;border:0;background:#fff}
+/* OnlyOffice editor placeholder — DocEditor injects an <iframe> that fills it */
+#cde-onlyoffice{flex:1;min-height:0;width:100%;background:#fff}
+#cde-onlyoffice iframe{width:100%;height:100%;border:0}
 .viewer-center{flex:1;display:flex;align-items:center;justify-content:center;padding:18px}
 .viewer-img{max-width:100%;max-height:100%;object-fit:contain;box-shadow:0 4px 18px rgba(15,23,42,.2)}
 .viewer-media{max-width:100%;max-height:100%}

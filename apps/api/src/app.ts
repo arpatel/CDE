@@ -9,6 +9,7 @@ import { roleRoutes } from "./modules/role/role.routes.js";
 import { projectRoutes } from "./modules/project/project.routes.js";
 import { userRoutes } from "./modules/user/user.routes.js";
 import { documentRoutes } from "./modules/document/document.routes.js";
+import { editorRoutes } from "./modules/document/editor.routes.js";
 import { domainRoutes } from "./modules/domain/domain.routes.js";
 
 const API_PREFIX = "/v1";
@@ -87,6 +88,7 @@ export async function buildApp(): Promise<FastifyInstance> {
       await v1.register(userRoutes);
       await v1.register(projectRoutes);
       await v1.register(documentRoutes);
+      await v1.register(editorRoutes);
       await v1.register(domainRoutes);
     },
     { prefix: API_PREFIX },

@@ -176,10 +176,10 @@ async function computeFolderAccess(
 //   manage → can also change the folder's access ("Can manage")
 // Root (folderId === null) carries no folder ACL, so it is governed purely by
 // module permissions (treated as "manage" here — module guards still apply).
-type FolderLevel = "none" | "view" | "edit" | "manage";
-const LEVEL_RANK: Record<FolderLevel, number> = { none: 0, view: 1, edit: 2, manage: 3 };
+export type FolderLevel = "none" | "view" | "edit" | "manage";
+export const LEVEL_RANK: Record<FolderLevel, number> = { none: 0, view: 1, edit: 2, manage: 3 };
 
-async function folderLevelFor(
+export async function folderLevelFor(
   tenantId: string,
   projectId: string,
   userId: string,
@@ -313,6 +313,7 @@ export async function createRevisionFromBuffer(opts: {
   purposeOfIssue?: string;
   revisionLabel?: string;
   revisionNotes?: string | null;
+  secondary?: { buffer: Buffer; filename: string } | null;
   ip?: string | null;
 }) {
   const { tenantId, projectId, documentId, buffer, filename, mimeType, uploaderId } = opts;
@@ -320,6 +321,11 @@ export async function createRevisionFromBuffer(opts: {
   const revId = randomUUID();
   const fileKey = revFileKey(tenantId, projectId, documentId, revId, filename);
   const saved = await saveBuffer(fileKey, buffer);
+  let secondaryFileKey: string | null = null;
+  if (opts.secondary) {
+    secondaryFileKey = revFileKey(tenantId, projectId, documentId, revId, `secondary_${opts.secondary.filename}`);
+    await saveBuffer(secondaryFileKey, opts.secondary.buffer);
+  }
   const rev = await prisma.documentRevision.create({
     data: {
       id: revId,
@@ -335,6 +341,8 @@ export async function createRevisionFromBuffer(opts: {
       status: opts.status ?? "uploaded",
       purposeOfIssue: opts.purposeOfIssue ?? "For Information",
       revisionNotes: opts.revisionNotes ?? null,
+      secondaryFileKey,
+      secondaryName: opts.secondary?.filename ?? null,
     },
   });
   const doc = await prisma.document.update({
@@ -415,6 +423,7 @@ export async function documentRoutes(app: FastifyInstance): Promise<void> {
         folderId: d.folderId,
         currentRevisionId: d.currentRevisionId,
         revisionLabel: rev?.revisionLabel ?? null,
+        fileName: rev?.originalName ?? null,
         attributes: d.attributes ?? {},
         uploadedAt: (rev?.createdAt ?? d.createdAt).toISOString(),
         uploadedBy: nameOf(uploaderId),
@@ -740,40 +749,21 @@ export async function documentRoutes(app: FastifyInstance): Promise<void> {
       const secondary = files.secondaryFile;
       if (secondary && isBlockedFile(secondary.filename)) throw ApiError.unprocessable("Secondary file type not allowed");
 
-      const count = await prisma.documentRevision.count({ where: { documentId: id } });
-      const revId = randomUUID();
-      const fileKey = revFileKey(tenantId, projectId, id, revId, primary.filename);
-      const saved = await saveBuffer(fileKey, primary.buffer);
-      let secondaryFileKey: string | null = null;
-      if (secondary) {
-        secondaryFileKey = revFileKey(tenantId, projectId, id, revId, `secondary_${secondary.filename}`);
-        await saveBuffer(secondaryFileKey, secondary.buffer);
-      }
-      const status = fields.status?.trim() || doc.status;
-      const rev = await prisma.documentRevision.create({
-        data: {
-          id: revId,
-          documentId: id,
-          revisionNumber: count + 1,
-          revisionLabel: fields.revisionLabel?.trim() || `P${String(count + 1).padStart(2, "0")}`,
-          fileKey,
-          originalName: primary.filename,
-          fileSize: BigInt(saved.size),
-          mimeType: primary.mimetype,
-          checksum: saved.checksum,
-          uploaderId: userId,
-          status,
-          purposeOfIssue: fields.purposeOfIssue?.trim() || "For Information",
-          revisionNotes: fields.revisionNotes?.trim() || null,
-          secondaryFileKey,
-          secondaryName: secondary?.filename ?? null,
-        },
+      const { doc: updated, rev } = await createRevisionFromBuffer({
+        tenantId,
+        projectId,
+        documentId: id,
+        buffer: primary.buffer,
+        filename: primary.filename,
+        mimeType: primary.mimetype,
+        uploaderId: userId,
+        status: fields.status?.trim() || doc.status,
+        purposeOfIssue: fields.purposeOfIssue?.trim() || "For Information",
+        revisionLabel: fields.revisionLabel?.trim() || undefined,
+        revisionNotes: fields.revisionNotes?.trim() || null,
+        secondary: secondary ? { buffer: secondary.buffer, filename: secondary.filename } : null,
+        ip: req.ip,
       });
-      const updated = await prisma.document.update({
-        where: { id },
-        data: { currentRevisionId: rev.id, status, version: { increment: 1 } },
-      });
-      await audit({ tenantId, userId, action: "document.revised", resourceType: "document", resourceId: id, changes: { revisionLabel: rev.revisionLabel }, ip: req.ip });
       return reply.code(201).send(serializeRevisionDoc(updated, rev));
     },
   );

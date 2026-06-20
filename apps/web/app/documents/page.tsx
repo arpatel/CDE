@@ -12,7 +12,16 @@ interface Doc {
   id: string; docNumber: string | null; title: string; status: string;
   currentRevisionId: string | null; folderId?: string | null;
   revisionLabel?: string | null; uploadedAt?: string; uploadedBy?: string;
+  fileName?: string | null;
   attributes?: Record<string, unknown>;
+}
+
+// Office formats OnlyOffice can edit in-browser (gates the "Edit online" action).
+const EDITABLE_EXT = new Set(["docx", "xlsx", "pptx", "odt", "ods", "odp", "csv", "txt"]);
+function isEditableDoc(d: Doc): boolean {
+  const n = (d.fileName ?? d.title ?? "").toLowerCase();
+  const ext = n.includes(".") ? n.slice(n.lastIndexOf(".") + 1) : "";
+  return !!d.currentRevisionId && EDITABLE_EXT.has(ext);
 }
 interface ApplicableAttr {
   id: string; name: string; controlType: string; mandatory: boolean;
@@ -39,6 +48,7 @@ export default function DocumentsPage() {
   const { projectId } = useApp();
   const [upload, setUpload] = useState<{ mode: "publish" | "revise"; doc?: Doc } | null>(null);
   const [viewDoc, setViewDoc] = useState<Doc | null>(null);
+  const [editOnline, setEditOnline] = useState<Doc | null>(null);
   const [newFolderParent, setNewFolderParent] = useState<{ parentId: string | null } | null>(null);
   const [manageFolder, setManageFolder] = useState<Folder | null>(null);
   const [selectedFolder, setSelectedFolder] = useState<string | null>(null);
@@ -252,6 +262,9 @@ export default function DocumentsPage() {
       {docMenu && (
         <div className="ctx-menu" style={{ top: docMenu.y, left: Math.max(8, docMenu.x) }} onClick={(e) => e.stopPropagation()}>
           <button className="ctx-item" disabled={!docMenu.doc.currentRevisionId} onClick={() => { setViewDoc(docMenu.doc); setDocMenu(null); }}>👁️ View (online)</button>
+          {isEditableDoc(docMenu.doc) && (
+            <button className="ctx-item" onClick={() => { setEditOnline(docMenu.doc); setDocMenu(null); }}>🖉 Edit online (Office)</button>
+          )}
           <button className="ctx-item" onClick={() => { setEditDoc(docMenu.doc); setDocMenu(null); }}>✏️ Edit attributes…</button>
           <button className="ctx-item" onClick={() => { setUpload({ mode: "revise", doc: docMenu.doc }); setDocMenu(null); }}>⬆️ New revision</button>
           <button className="ctx-item" disabled={!docMenu.doc.currentRevisionId || busyId === docMenu.doc.id} onClick={() => { const d = docMenu.doc; setDocMenu(null); downloadLatest(d); }}>⬇️ Download</button>
@@ -298,6 +311,14 @@ export default function DocumentsPage() {
 
       {viewDoc && projectId && (
         <FileViewer projectId={projectId} doc={viewDoc} onClose={() => setViewDoc(null)} />
+      )}
+
+      {editOnline && projectId && (
+        <OnlineEditor
+          projectId={projectId}
+          doc={editOnline}
+          onClose={async () => { setEditOnline(null); await mutate(); }}
+        />
       )}
 
       {editDoc && projectId && (
@@ -525,6 +546,90 @@ function FileViewer({ projectId, doc, onClose }: { projectId: string; doc: Doc; 
                 <button className="btn btn-primary btn-sm" onClick={download}>⬇️ Download to open</button>
               </div>
             )
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Online Office editor (OnlyOffice) ────────────────────────────────────────
+// Loads the Document Server's api.js, then mounts a DocEditor bound to a signed
+// config we fetch from our API. Editing checks the doc out; on close the DS
+// posts the edited file back to our callback as a new revision.
+declare global {
+  interface Window {
+    DocsAPI?: { DocEditor: new (id: string, config: unknown) => { destroyEditor: () => void } };
+  }
+}
+
+let dsScriptPromise: Promise<void> | null = null;
+function loadDocsApi(documentServerUrl: string): Promise<void> {
+  if (typeof window !== "undefined" && window.DocsAPI) return Promise.resolve();
+  if (dsScriptPromise) return dsScriptPromise;
+  dsScriptPromise = new Promise<void>((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = `${documentServerUrl.replace(/\/$/, "")}/web-apps/apps/api/documents/api.js`;
+    s.async = true;
+    s.onload = () => resolve();
+    s.onerror = () => { dsScriptPromise = null; reject(new Error("Could not load the editor. Is the Document Server running?")); };
+    document.head.appendChild(s);
+  });
+  return dsScriptPromise;
+}
+
+function OnlineEditor({ projectId, doc, onClose }: { projectId: string; doc: Doc; onClose: () => void }) {
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const editorRef = useRef<{ destroyEditor: () => void } | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { config, documentServerUrl } = await api.get<{ config: Record<string, unknown>; documentServerUrl: string }>(
+          `/projects/${projectId}/documents/${doc.id}/editor-config`,
+        );
+        await loadDocsApi(documentServerUrl);
+        if (cancelled) return;
+        if (!window.DocsAPI) throw new Error("Editor failed to initialise.");
+        // Close cleanly when the user uses the editor's own close/back control.
+        const cfg = { ...config, events: { onRequestClose: () => onClose(), onError: () => undefined } };
+        editorRef.current = new window.DocsAPI.DocEditor("cde-onlyoffice", cfg);
+        setLoading(false);
+      } catch (err) {
+        if (!cancelled) setError(err instanceof ApiError ? err.message : err instanceof Error ? err.message : "Could not open the editor.");
+      }
+    })();
+    return () => {
+      cancelled = true;
+      try { editorRef.current?.destroyEditor(); } catch { /* already gone */ }
+      editorRef.current = null;
+    };
+  }, [projectId, doc.id, onClose]);
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal viewer-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="viewer-head">
+          <div style={{ minWidth: 0 }}>
+            <div className="viewer-title">🖉 {doc.title}</div>
+            <div className="muted" style={{ fontSize: 12 }}>{doc.docNumber ?? "—"} · saving creates a new revision</div>
+          </div>
+          <button className="btn btn-outline btn-sm" onClick={onClose}>✕ Close</button>
+        </div>
+        <div className="viewer-body">
+          {error ? (
+            <div className="empty" style={{ textAlign: "center" }}>
+              <div style={{ fontSize: 40 }}>🛠️</div>
+              <p>{error}</p>
+              <p className="muted" style={{ fontSize: 12 }}>Start the editor with <code>pnpm office:up</code>, then try again.</p>
+            </div>
+          ) : (
+            <>
+              {loading && <div className="center-msg">Opening editor…</div>}
+              <div id="cde-onlyoffice" style={{ width: "100%", height: "100%", display: loading ? "none" : "block" }} />
+            </>
           )}
         </div>
       </div>

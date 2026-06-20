@@ -19,6 +19,7 @@ Driven by a generic tenant+project-scoped CRUD factory (auto-numbering, soft-del
 
 - **Documents:** CRUD, presigned upload-url (local stub → S3 later), revisions, check-out/check-in locking. Folder tree (nested) + per-folder Doc Ref uniqueness, folder defaults, document register (upload date/author), online file viewer, and configurable attributes captured on upload.
 - **Folder access control:** folders **private by default**; per-folder grants to user/role at **view / edit (upload) / manage** levels with inherit-from-nearest-ancestor + copy-on-override. Enforced server-side on visibility, upload/revise/metadata-edit, and access changes; creator + superusers bypass.
+- **Online Office editing:** right-click → **Edit online** opens docx/xlsx/pptx in **OnlyOffice** (Docker service `onlyoffice`, `pnpm office:up`). Single-editor: editing checks the doc out; on close the edited file saves back as a **new revision** (metadata preserved, publisher = editor, rev++). JWT-signed config + save-back callback; no DB schema change.
 - **Drawings:** register CRUD + revisions.
 - **Workflow engine:** start instance with N steps, sequential `approve`/`reject` advancing, auto-complete, `/me/pending-approvals`.
 - **RFI:** CRUD + `respond` (threaded) + `close`/`void`, auto-number.
